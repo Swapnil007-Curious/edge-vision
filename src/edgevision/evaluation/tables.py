@@ -15,7 +15,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from edgevision.evaluation.metrics import error_pairs, macro_f1, per_group_accuracy, top_k_accuracy
-from edgevision.runs import CompletedRun
+from edgevision.runs import QUANT_VARIANTS, CompletedRun
 from edgevision.utils.runinfo import collect_run_info
 
 PRIMARY_SPLIT_MODE = "signer_independent"
@@ -59,6 +59,19 @@ CONFUSION_COLUMNS = (
     "predicted_label",
     "predicted_sign",
     "count",
+)
+QUANT_TEST_SUMMARY_COLUMNS = (
+    "model",
+    "variant",
+    "n_seeds",
+    "top1_mean",
+    "top1_std",
+    "delta_vs_fp32_mean",
+    "delta_vs_fp32_std",
+    "top5_mean",
+    "macro_f1_mean",
+    "agreement_mean",
+    "size_mb",
 )
 
 
@@ -132,6 +145,40 @@ def summarize_test(records: Sequence[dict[str, Any]]) -> pd.DataFrame:
     frame = pd.DataFrame(records)
     table = _mean_std(frame, ("test_top1", "test_top5", "test_macro_f1"))
     return table.loc[:, list(TEST_SUMMARY_COLUMNS)]
+
+
+def summarize_quant_test(records: Sequence[dict[str, Any]]) -> pd.DataFrame:
+    """One row per (model, variant) of ONNX variants on test.
+
+    ``records`` hold model, seed, variant, size_bytes, agreement_with_fp32 and the
+    score_test_split() keys. Deltas are paired by seed against that seed's fp32 variant; size_mb
+    is in units of 10^6 bytes.
+    """
+    frame = pd.DataFrame(records)
+    fp32 = frame.loc[frame["variant"] == "fp32", ["model", "seed", "test_top1"]]
+    frame = frame.merge(
+        fp32.rename(columns={"test_top1": "fp32_top1"}), on=["model", "seed"], how="left"
+    )
+    frame["delta"] = frame["test_top1"] - frame["fp32_top1"]
+    frame["size_mb"] = frame["size_bytes"] / 1e6
+    frame["variant"] = pd.Categorical(frame["variant"], categories=QUANT_VARIANTS, ordered=True)
+    table = (
+        frame.groupby(["model", "variant"], sort=True, observed=True)
+        .agg(
+            n_seeds=("seed", "nunique"),
+            top1_mean=("test_top1", "mean"),
+            top1_std=("test_top1", "std"),
+            delta_vs_fp32_mean=("delta", "mean"),
+            delta_vs_fp32_std=("delta", "std"),
+            top5_mean=("test_top5", "mean"),
+            macro_f1_mean=("test_macro_f1", "mean"),
+            agreement_mean=("agreement_with_fp32", "mean"),
+            size_mb=("size_mb", "mean"),
+        )
+        .reset_index()
+    )
+    table["variant"] = table["variant"].astype(str)
+    return table.loc[:, list(QUANT_TEST_SUMMARY_COLUMNS)]
 
 
 def per_participant_table(records: Sequence[dict[str, Any]]) -> pd.DataFrame:

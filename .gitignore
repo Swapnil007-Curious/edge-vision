@@ -14,6 +14,8 @@ venv/
 # Anchored to the repo root: a bare "data/" would also ignore src/edgevision/data/.
 /data/
 results/**/artifacts
+# Quantised models; their quant_report.json files and the result CSVs stay tracked.
+results/quant/**/*.onnx
 results_bundle.zip
 *.pt
 *.onnx

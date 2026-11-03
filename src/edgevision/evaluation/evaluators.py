@@ -1,7 +1,7 @@
 """Evaluators turn (n, 32, 100) float32 inputs into logits, whatever runs the model.
 
-final_eval.py talks only to this interface, so ONNX or quantised evaluators can be added
-beside TorchCheckpointEvaluator without restructuring it.
+final_eval.py talks only to this interface: TorchCheckpointEvaluator runs a best.pt checkpoint
+and OnnxEvaluator runs the ONNX variants that scripts/quantize.py writes.
 """
 
 from abc import ABC, abstractmethod
@@ -12,6 +12,7 @@ import numpy.typing as npt
 import torch
 
 from edgevision.models.registry import load_checkpoint
+from edgevision.runtime import META_VARIANT, OrtModel, label_map_from_metadata
 
 FloatArray = npt.NDArray[np.float32]
 
@@ -50,4 +51,31 @@ class TorchCheckpointEvaluator(Evaluator):
             batch = torch.from_numpy(np.ascontiguousarray(X[start : start + self.batch_size]))
             logits = self.model(batch.to(self.device, dtype=torch.float32))
             parts.append(logits.float().cpu().numpy())
+        return np.concatenate(parts)
+
+
+class OnnxEvaluator(Evaluator):
+    """An ONNX variant written by scripts/quantize.py, run by onnxruntime on CPU.
+
+    The label map and variant name come from the file's metadata. Settings: CPUExecutionProvider,
+    ORT_ENABLE_ALL, ``intra_op_threads`` intra-op threads, batches of ``batch_size``.
+    """
+
+    def __init__(self, path: Path, intra_op_threads: int = 4, batch_size: int = 256):
+        self.model = OrtModel(path, intra_op_threads)
+        metadata = self.model.metadata
+        self.label_map = label_map_from_metadata(metadata, path)
+        self.num_classes = len(self.label_map)
+        if self.model.num_outputs != self.num_classes:
+            raise ValueError(
+                f"{path}: {self.model.num_outputs} outputs but {self.num_classes} labels"
+            )
+        self.name = f"onnx_{metadata.get(META_VARIANT, Path(path).stem)}"
+        self.batch_size = batch_size
+
+    def predict(self, X: FloatArray) -> FloatArray:
+        parts = [np.empty((0, self.num_classes), dtype=np.float32)]
+        for start in range(0, len(X), self.batch_size):
+            batch = np.ascontiguousarray(X[start : start + self.batch_size], dtype=np.float32)
+            parts.append(self.model.run(batch))
         return np.concatenate(parts)
