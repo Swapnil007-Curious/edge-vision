@@ -1,0 +1,18 @@
+preprocess:
+  data_root: /kaggle/input/asl-signs
+  output_dir: /kaggle/working/processed
+  num_frames: 32
+  use_z: false
+  pose_indices: [0, 11, 12, 13, 14, 15, 16]
+  min_hand_frames: 3
+  limit: null
+  num_workers: 4
+  seed: 42
+
+split:
+  mode: signer_independent
+  n_test_signers: 4
+  n_val_signers: 3
+  val_fraction: 0.1
+  test_fraction: 0.1
+  seed: 42

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Data and generated outputs
+# Anchored to the repo root: a bare "data/" would also ignore src/edgevision/data/.
+/data/
+results/**/artifacts
+*.onnx
+*.npz
+*.parquet
+
+# Tool caches
+.ipynb_checkpoints/
+.mypy_cache/
+.ruff_cache/
