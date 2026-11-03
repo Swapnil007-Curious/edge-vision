@@ -1,0 +1,31 @@
+# processed_dir is a Kaggle placeholder; pass --processed-dir with the real location.
+model:
+  name: gru
+  proj_dim: 192
+  hidden_size: 128
+  num_layers: 2
+  input_dropout: 0.2
+  rnn_dropout: 0.2
+  head_dropout: 0.3
+processed_dir: /kaggle/input/edge-vision-preprocess/processed
+split:
+  mode: signer_independent
+  n_test_signers: 4
+  n_val_signers: 3
+  val_fraction: 0.1
+  test_fraction: 0.1
+  seed: 42
+epochs: 60
+batch_size: 256
+lr: 1.0e-3
+weight_decay: 0.05
+warmup_fraction: 0.05
+label_smoothing: 0.1
+grad_clip: 1.0
+patience: 15
+augment:
+  affine_p: 0.8
+  temporal_p: 0.5
+  jitter_p: 0.5
+num_threads: 4
+output_root: results/runs

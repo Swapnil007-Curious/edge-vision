@@ -1,4 +1,5 @@
 -r requirements.txt
+-r requirements-train.txt
 mypy==2.4.1
 pandas-stubs==3.1.0.261029
 pytest==9.2.0

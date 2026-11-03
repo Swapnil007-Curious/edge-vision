@@ -14,6 +14,8 @@ venv/
 # Anchored to the repo root: a bare "data/" would also ignore src/edgevision/data/.
 /data/
 results/**/artifacts
+results_bundle.zip
+*.pt
 *.onnx
 *.npz
 *.parquet

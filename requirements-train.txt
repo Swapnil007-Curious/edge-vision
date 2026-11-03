@@ -1,0 +1,6 @@
+# torch is the CPU build, which only the PyTorch index serves. Install it first:
+#   pip install torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu
+# then this file (or requirements-dev.txt). Kaggle keeps its own CUDA torch and does not use this.
+torch==2.15.0+cpu
+onnx==1.23.2
+onnxruntime==1.31.1
