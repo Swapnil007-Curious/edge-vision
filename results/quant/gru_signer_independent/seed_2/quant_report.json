@@ -1,0 +1,532 @@
+{
+  "run": "gru_signer_independent/seed_2",
+  "model": "gru",
+  "seed": 2,
+  "split_mode": "signer_independent",
+  "checkpoint": "results\\runs\\gru_signer_independent\\seed_2\\best.pt",
+  "checkpoint_val_top1": 0.607094567724489,
+  "processed_dir": "data\\processed",
+  "error": null,
+  "checkpoint_sha256": "4681c1fd2380925b85554f6400a2ef7f45da96136b0d1f092f7acf255d020a71",
+  "splits_file": "results\\runs\\gru_signer_independent\\seed_2\\splits_signer_independent.json",
+  "val_sequences": 12573,
+  "fp16_min_agreement": 0.99,
+  "calibration": {
+    "split": "train",
+    "requested_samples": 1024,
+    "samples": 1024,
+    "train_sequences": 58717,
+    "seed": 0,
+    "batch_size": 64
+  },
+  "variants": {
+    "fp32": {
+      "file": "fp32.onnx",
+      "error": null,
+      "status": "built",
+      "settings": {
+        "opset": 17
+      },
+      "excluded_node_count": 0,
+      "excluded_node_names": [],
+      "tool_messages": {},
+      "size_bytes": 2860060,
+      "graph": {
+        "node_count": 101,
+        "op_counts": {
+          "Add": 2,
+          "And": 1,
+          "Cast": 1,
+          "Clip": 1,
+          "Concat": 4,
+          "Constant": 47,
+          "ConstantOfShape": 2,
+          "Div": 2,
+          "Equal": 2,
+          "Erf": 1,
+          "GRU": 2,
+          "Gather": 3,
+          "Gemm": 1,
+          "LayerNormalization": 1,
+          "MatMul": 1,
+          "Mul": 3,
+          "Not": 2,
+          "Or": 1,
+          "ReduceMax": 1,
+          "ReduceMean": 1,
+          "Reshape": 4,
+          "Shape": 2,
+          "Slice": 8,
+          "Sub": 2,
+          "Transpose": 4,
+          "Unsqueeze": 2
+        },
+        "float_compute_nodes": {
+          "MatMul": 1,
+          "Gemm": 1,
+          "Conv": 0,
+          "GRU": 2
+        },
+        "qdq_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 0
+        },
+        "integer_and_qdq_nodes": {
+          "MatMulInteger": 0,
+          "ConvInteger": 0,
+          "DynamicQuantizeMatMul": 0,
+          "QLinearMatMul": 0,
+          "QLinearConv": 0,
+          "QuantizeLinear": 0,
+          "DequantizeLinear": 0
+        },
+        "fraction_compute_ops_quantised": 0.0,
+        "gru_float_remaining": 2,
+        "any_gru_float": true
+      },
+      "input_quantised": false,
+      "onnx_checker": {
+        "passed": true,
+        "error": null
+      },
+      "ort_load": {
+        "passed": true,
+        "error": null
+      },
+      "val": {
+        "top1": 0.607094567724489,
+        "all_finite": true,
+        "agreement_with_fp32": 1.0,
+        "max_abs_logit_diff_vs_fp32": 0.0,
+        "diff_samples": 512
+      }
+    },
+    "fp16": {
+      "file": "fp16.onnx",
+      "error": null,
+      "status": "built",
+      "settings": {
+        "keep_io_types": true
+      },
+      "feature_block_fp32": false,
+      "fallback_reason": null,
+      "attempts": [
+        {
+          "feature_block_fp32": false,
+          "all_finite": true,
+          "val_agreement_with_fp32": 0.9991251093613298
+        }
+      ],
+      "excluded_node_count": 0,
+      "excluded_node_names": [],
+      "tool_messages": {},
+      "size_bytes": 1443444,
+      "graph": {
+        "node_count": 103,
+        "op_counts": {
+          "Add": 2,
+          "And": 1,
+          "Cast": 3,
+          "Clip": 1,
+          "Concat": 4,
+          "Constant": 47,
+          "ConstantOfShape": 2,
+          "Div": 2,
+          "Equal": 2,
+          "Erf": 1,
+          "GRU": 2,
+          "Gather": 3,
+          "Gemm": 1,
+          "LayerNormalization": 1,
+          "MatMul": 1,
+          "Mul": 3,
+          "Not": 2,
+          "Or": 1,
+          "ReduceMax": 1,
+          "ReduceMean": 1,
+          "Reshape": 4,
+          "Shape": 2,
+          "Slice": 8,
+          "Sub": 2,
+          "Transpose": 4,
+          "Unsqueeze": 2
+        },
+        "float_compute_nodes": {
+          "MatMul": 1,
+          "Gemm": 1,
+          "Conv": 0,
+          "GRU": 2
+        },
+        "qdq_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 0
+        },
+        "integer_and_qdq_nodes": {
+          "MatMulInteger": 0,
+          "ConvInteger": 0,
+          "DynamicQuantizeMatMul": 0,
+          "QLinearMatMul": 0,
+          "QLinearConv": 0,
+          "QuantizeLinear": 0,
+          "DequantizeLinear": 0
+        },
+        "fraction_compute_ops_quantised": 0.0,
+        "gru_float_remaining": 2,
+        "any_gru_float": true
+      },
+      "input_quantised": false,
+      "onnx_checker": {
+        "passed": true,
+        "error": null
+      },
+      "ort_load": {
+        "passed": true,
+        "error": null
+      },
+      "val": {
+        "top1": 0.607094567724489,
+        "all_finite": true,
+        "agreement_with_fp32": 0.9991251093613298,
+        "max_abs_logit_diff_vs_fp32": 0.022457599639892578,
+        "diff_samples": 512
+      }
+    },
+    "int8_dynamic": {
+      "file": "int8_dynamic.onnx",
+      "error": null,
+      "status": "built",
+      "settings": {
+        "weight_type": "QInt8",
+        "per_channel": true
+      },
+      "excluded_node_count": 0,
+      "excluded_node_names": [],
+      "tool_messages": {
+        "Please consider to run pre-processing before quantization. Refer to example: https://github.com/microsoft/onnxruntime-inference-examples/blob/main/quantization/image_classification/cpu/ReadMe.md ": 1
+      },
+      "size_bytes": 2371028,
+      "graph": {
+        "node_count": 110,
+        "op_counts": {
+          "Add": 3,
+          "And": 1,
+          "Cast": 3,
+          "Clip": 1,
+          "Concat": 4,
+          "Constant": 47,
+          "ConstantOfShape": 2,
+          "Div": 2,
+          "DynamicQuantizeLinear": 2,
+          "Equal": 2,
+          "Erf": 1,
+          "GRU": 2,
+          "Gather": 3,
+          "LayerNormalization": 1,
+          "MatMulInteger": 2,
+          "Mul": 7,
+          "Not": 2,
+          "Or": 1,
+          "ReduceMax": 1,
+          "ReduceMean": 1,
+          "Reshape": 4,
+          "Shape": 2,
+          "Slice": 8,
+          "Sub": 2,
+          "Transpose": 4,
+          "Unsqueeze": 2
+        },
+        "float_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 2
+        },
+        "qdq_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 0
+        },
+        "integer_and_qdq_nodes": {
+          "MatMulInteger": 2,
+          "ConvInteger": 0,
+          "DynamicQuantizeMatMul": 0,
+          "QLinearMatMul": 0,
+          "QLinearConv": 0,
+          "QuantizeLinear": 0,
+          "DequantizeLinear": 0
+        },
+        "fraction_compute_ops_quantised": 0.5,
+        "gru_float_remaining": 2,
+        "any_gru_float": true
+      },
+      "input_quantised": false,
+      "onnx_checker": {
+        "passed": true,
+        "error": null
+      },
+      "ort_load": {
+        "passed": true,
+        "error": null
+      },
+      "val": {
+        "top1": 0.5723375487155015,
+        "all_finite": true,
+        "agreement_with_fp32": 0.8325777459635727,
+        "max_abs_logit_diff_vs_fp32": 4.292130470275879,
+        "diff_samples": 512
+      }
+    },
+    "int8_static": {
+      "file": "int8_static.onnx",
+      "error": null,
+      "status": "built",
+      "settings": {
+        "quant_format": "QDQ",
+        "activation_type": "QUInt8",
+        "weight_type": "QInt8",
+        "per_channel": true,
+        "reduce_range": false,
+        "calibrate_method": "MinMax"
+      },
+      "calibration": {
+        "split": "train",
+        "requested_samples": 1024,
+        "samples": 1024,
+        "train_sequences": 58717,
+        "seed": 0,
+        "batch_size": 64
+      },
+      "excluded_node_count": 26,
+      "excluded_node_names": [
+        "/features/Slice",
+        "/features/Reshape",
+        "/features/Gather_1",
+        "/features/Equal_1",
+        "/features/Not_1",
+        "/features/Gather",
+        "/features/Equal",
+        "/features/Not",
+        "/features/Or",
+        "/features/Slice_2",
+        "/features/Slice_1",
+        "/features/And",
+        "/features/Unsqueeze",
+        "/features/Cast",
+        "/features/Slice_4",
+        "/features/Slice_3",
+        "/features/Sub",
+        "/features/Mul",
+        "/features/Slice_5",
+        "/features/Shape",
+        "/features/ConstantOfShape",
+        "/features/Concat",
+        "/features/Reshape_1",
+        "/features/Concat_1",
+        "/features/Sub_1",
+        "/features/Div"
+      ],
+      "tool_messages": {
+        "Axis 1 is out-of-range for weight 'proj.1.weight' with rank 1": 1
+      },
+      "size_bytes": 2376709,
+      "graph": {
+        "node_count": 86,
+        "op_counts": {
+          "Add": 2,
+          "And": 1,
+          "Cast": 1,
+          "Concat": 4,
+          "ConstantOfShape": 2,
+          "DequantizeLinear": 21,
+          "Div": 2,
+          "Equal": 2,
+          "Erf": 1,
+          "GRU": 2,
+          "Gather": 3,
+          "Gemm": 1,
+          "LayerNormalization": 1,
+          "MatMul": 1,
+          "Mul": 3,
+          "Not": 2,
+          "Or": 1,
+          "QuantizeLinear": 13,
+          "ReduceMax": 1,
+          "ReduceMean": 1,
+          "Reshape": 4,
+          "Shape": 2,
+          "Slice": 8,
+          "Sub": 2,
+          "Transpose": 3,
+          "Unsqueeze": 2
+        },
+        "float_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 2
+        },
+        "qdq_compute_nodes": {
+          "MatMul": 1,
+          "Gemm": 1,
+          "Conv": 0,
+          "GRU": 0
+        },
+        "integer_and_qdq_nodes": {
+          "MatMulInteger": 0,
+          "ConvInteger": 0,
+          "DynamicQuantizeMatMul": 0,
+          "QLinearMatMul": 0,
+          "QLinearConv": 0,
+          "QuantizeLinear": 13,
+          "DequantizeLinear": 21
+        },
+        "fraction_compute_ops_quantised": 0.5,
+        "gru_float_remaining": 2,
+        "any_gru_float": true
+      },
+      "input_quantised": false,
+      "onnx_checker": {
+        "passed": true,
+        "error": null
+      },
+      "ort_load": {
+        "passed": true,
+        "error": null
+      },
+      "val": {
+        "top1": 0.5122882366976855,
+        "all_finite": true,
+        "agreement_with_fp32": 0.6991171558100692,
+        "max_abs_logit_diff_vs_fp32": 6.8322625160217285,
+        "diff_samples": 512
+      }
+    },
+    "int8_static_full": {
+      "file": "int8_static_full.onnx",
+      "error": null,
+      "status": "built",
+      "settings": {
+        "quant_format": "QDQ",
+        "activation_type": "QUInt8",
+        "weight_type": "QInt8",
+        "per_channel": true,
+        "reduce_range": false,
+        "calibrate_method": "MinMax"
+      },
+      "calibration": {
+        "split": "train",
+        "requested_samples": 1024,
+        "samples": 1024,
+        "train_sequences": 58717,
+        "seed": 0,
+        "batch_size": 64
+      },
+      "excluded_node_count": 0,
+      "excluded_node_names": [],
+      "tool_messages": {
+        "Axis 1 is out-of-range for weight 'proj.1.weight' with rank 1": 1
+      },
+      "size_bytes": 2380931,
+      "graph": {
+        "node_count": 104,
+        "op_counts": {
+          "Add": 2,
+          "And": 1,
+          "Cast": 1,
+          "Concat": 4,
+          "ConstantOfShape": 2,
+          "DequantizeLinear": 30,
+          "Div": 2,
+          "Equal": 2,
+          "Erf": 1,
+          "GRU": 2,
+          "Gather": 3,
+          "Gemm": 1,
+          "LayerNormalization": 1,
+          "MatMul": 1,
+          "Mul": 3,
+          "Not": 2,
+          "Or": 1,
+          "QuantizeLinear": 22,
+          "ReduceMax": 1,
+          "ReduceMean": 1,
+          "Reshape": 4,
+          "Shape": 2,
+          "Slice": 8,
+          "Sub": 2,
+          "Transpose": 3,
+          "Unsqueeze": 2
+        },
+        "float_compute_nodes": {
+          "MatMul": 0,
+          "Gemm": 0,
+          "Conv": 0,
+          "GRU": 2
+        },
+        "qdq_compute_nodes": {
+          "MatMul": 1,
+          "Gemm": 1,
+          "Conv": 0,
+          "GRU": 0
+        },
+        "integer_and_qdq_nodes": {
+          "MatMulInteger": 0,
+          "ConvInteger": 0,
+          "DynamicQuantizeMatMul": 0,
+          "QLinearMatMul": 0,
+          "QLinearConv": 0,
+          "QuantizeLinear": 22,
+          "DequantizeLinear": 30
+        },
+        "fraction_compute_ops_quantised": 0.5,
+        "gru_float_remaining": 2,
+        "any_gru_float": true
+      },
+      "input_quantised": true,
+      "onnx_checker": {
+        "passed": true,
+        "error": null
+      },
+      "ort_load": {
+        "passed": true,
+        "error": null
+      },
+      "val": {
+        "top1": 0.5165036188658236,
+        "all_finite": true,
+        "agreement_with_fp32": 0.7065934939950688,
+        "max_abs_logit_diff_vs_fp32": 6.531538009643555,
+        "diff_samples": 512
+      }
+    }
+  },
+  "failures": [],
+  "tool_versions": {
+    "python": "3.11.9",
+    "numpy": "2.4.6",
+    "torch": "2.15.0+cpu",
+    "onnx": "1.23.2",
+    "onnxruntime": "1.31.1"
+  },
+  "run_info": {
+    "git_commit": "d34f874a92aaee6f7d30408c1e9f9a9d1900136b",
+    "git_dirty": true,
+    "python_version": "3.11.9",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i3-1115G4 @ 3.00GHz",
+    "cpu_logical_cores": 4,
+    "cpu_physical_cores": 2,
+    "ram_total_bytes": 21205123072,
+    "packages": {
+      "numpy": "2.4.6",
+      "pandas": "3.1.0",
+      "pyarrow": "26.0.0"
+    },
+    "timestamp_utc": "2026-11-04T20:24:39.354738+00:00"
+  }
+}

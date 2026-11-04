@@ -1,0 +1,32 @@
+{
+  "model": "transformer",
+  "split_mode": "signer_independent",
+  "seed": 2,
+  "variant": "fp16",
+  "evaluator": "onnx_fp16",
+  "file": "results\\quant\\transformer_signer_independent\\seed_2\\fp16.onnx",
+  "size_bytes": 2650784,
+  "n_sequences": 16242,
+  "test_top1": 0.6253540204408324,
+  "test_top5": 0.8290235192710257,
+  "test_macro_f1": 0.613918179655995,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.4703703703703704
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.7142526608051828
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5565072070190098
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.7074216106474172
+    }
+  },
+  "agreement_with_fp32": 0.9992611747321758
+}

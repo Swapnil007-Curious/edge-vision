@@ -1,0 +1,32 @@
+{
+  "model": "gru",
+  "split_mode": "signer_independent",
+  "seed": 2,
+  "variant": "fp16",
+  "evaluator": "onnx_fp16",
+  "file": "results\\quant\\gru_signer_independent\\seed_2\\fp16.onnx",
+  "size_bytes": 1443444,
+  "n_sequences": 16242,
+  "test_top1": 0.6092845708656569,
+  "test_top5": 0.8325945080655092,
+  "test_macro_f1": 0.5974065061097877,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.44333333333333336
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.7043035631652013
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5395863797785669
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.6929844349199188
+    }
+  },
+  "agreement_with_fp32": 0.9993227435044946
+}

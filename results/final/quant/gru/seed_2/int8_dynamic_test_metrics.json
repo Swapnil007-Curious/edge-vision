@@ -1,0 +1,32 @@
+{
+  "model": "gru",
+  "split_mode": "signer_independent",
+  "seed": 2,
+  "variant": "int8_dynamic",
+  "evaluator": "onnx_int8_dynamic",
+  "file": "results\\quant\\gru_signer_independent\\seed_2\\int8_dynamic.onnx",
+  "size_bytes": 2371028,
+  "n_sequences": 16242,
+  "test_top1": 0.5829947050855806,
+  "test_top5": 0.8146164265484547,
+  "test_macro_f1": 0.5709617806244821,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.4174074074074074
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.6691346598796853
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5226655525381241
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.6650124069478908
+    }
+  },
+  "agreement_with_fp32": 0.8486023888683659
+}

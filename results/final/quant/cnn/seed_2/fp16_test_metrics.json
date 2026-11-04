@@ -1,0 +1,32 @@
+{
+  "model": "cnn",
+  "split_mode": "signer_independent",
+  "seed": 2,
+  "variant": "fp16",
+  "evaluator": "onnx_fp16",
+  "file": "results\\quant\\cnn_signer_independent\\seed_2\\fp16.onnx",
+  "size_bytes": 673738,
+  "n_sequences": 16242,
+  "test_top1": 0.623691663588228,
+  "test_top5": 0.8434921807659155,
+  "test_macro_f1": 0.609894987582423,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.45740740740740743
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.7172605275335493
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5682055567161062
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.6936611775321453
+    }
+  },
+  "agreement_with_fp32": 0.9995074498214506
+}

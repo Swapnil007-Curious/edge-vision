@@ -1,0 +1,32 @@
+{
+  "model": "transformer",
+  "split_mode": "signer_independent",
+  "seed": 2,
+  "variant": "int8_static",
+  "evaluator": "onnx_int8_static",
+  "file": "results\\quant\\transformer_signer_independent\\seed_2\\int8_static.onnx",
+  "size_bytes": 1518128,
+  "n_sequences": 16242,
+  "test_top1": 0.5726511513360424,
+  "test_top5": 0.7862947912818619,
+  "test_macro_f1": 0.5575803692971812,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.41703703703703704
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.6427579824155484
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5212032588259871
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.6553124295059779
+    }
+  },
+  "agreement_with_fp32": 0.750092353158478
+}

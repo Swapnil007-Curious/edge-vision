@@ -1,0 +1,32 @@
+{
+  "model": "cnn",
+  "split_mode": "signer_independent",
+  "seed": 1,
+  "variant": "int8_static_full",
+  "evaluator": "onnx_int8_static_full",
+  "file": "results\\quant\\cnn_signer_independent\\seed_1\\int8_static_full.onnx",
+  "size_bytes": 460282,
+  "n_sequences": 16242,
+  "test_top1": 0.5719738948405368,
+  "test_top5": 0.8144317202314986,
+  "test_macro_f1": 0.5596088676240428,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.4225925925925926
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.6381304951411384
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5316482139126801
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.641551996390706
+    }
+  },
+  "agreement_with_fp32": 0.7235562122891269
+}
