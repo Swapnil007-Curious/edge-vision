@@ -26,3 +26,12 @@ results_bundle.zip
 .ipynb_checkpoints/
 .mypy_cache/
 .ruff_cache/
+
+# Web demo: dependencies, fetched third-party assets (npm run fetch-assets) and test output.
+web/node_modules/
+web/dist/
+web/public/mediapipe/
+web/test-results/
+web/playwright-report/
+# The exported browser model is committed while it stays under 10 MB.
+!web/public/model/model.onnx

@@ -76,7 +76,7 @@ python scripts/quantize.py --runs-root results/runs --processed-dir data/process
 python scripts/final_eval.py --processed-dir data/processed --quant-root results/quant
 ```
 
-`quantize.py` writes four variants per run to `results/quant/<model>_signer_independent/seed_<s>/`:
+`quantize.py` writes five variants per run to `results/quant/<model>_signer_independent/seed_<s>/`:
 
 - `fp32.onnx`: the checkpoint exported at opset 17, velocity and standardisation included.
 - `fp16.onnx`: float16 weights and compute with float32 input and output. If any val output is
@@ -85,14 +85,29 @@ python scripts/final_eval.py --processed-dir data/processed --quant-root results
 - `int8_dynamic.onnx`: dynamic quantisation, int8 weights per channel.
 - `int8_static.onnx`: static QDQ quantisation after `quant_pre_process`, uint8 activations and
   int8 per-channel weights, MinMax calibration on 1024 train sequences sampled with seed 0 and
-  fed in batches of 64. Calibration reads only the train split.
+  fed in batches of 64. Calibration reads only the train split. The feature block's nodes are
+  excluded from quantisation, so the `landmarks` input, velocity and standardisation stay
+  float32 and quantisation starts at the input of the first projection layer. Quantising the
+  raw input would round coordinates to an 8-bit grid before velocity is computed, and could turn
+  small coordinates (common near the torso centre after shoulder normalisation) into exact
+  zeros, which the feature block treats as missing points. The build fails if no feature-block
+  node is found, or if any QuantizeLinear node still reads the input or a tensor inside the block.
+- `int8_static_full.onnx`: an ablation only, the same as `int8_static` (same calibration data
+  and settings) but with nothing excluded, so the input and feature block are quantised too.
+  It is evaluated and benchmarked like the other variants.
 
 Each run's `quant_report.json` records, per variant, the file size, op counts, which MatMul, Gemm,
 Conv and GRU nodes stayed float, the checker and onnxruntime load results, val top-1, val top-1
-agreement with fp32 and the largest logit difference from fp32 on 512 val sequences. A variant
-that fails is recorded there and the other variants still run. `results/tables/quant_ops_summary.csv`
-summarises the reports. Existing variant files are reused unless `--overwrite` is passed; a file
-built from a different `best.pt` is reported as stale.
+agreement with fp32 and the largest logit difference from fp32 on 512 val sequences. It also
+records `excluded_node_count` and `excluded_node_names` (the nodes passed to the quantiser's
+`nodes_to_exclude`, empty for every variant except `int8_static`) and `input_quantised`, whether a
+QuantizeLinear or DynamicQuantizeLinear node reads `landmarks`. A variant that fails is recorded
+there and the other variants still run. `results/tables/quant_ops_summary.csv` summarises the
+reports. Existing variant files are reused unless `--overwrite` is passed; a file built from a
+different `best.pt` is reported as stale. Each file records the schema version of its variant's
+build recipe, and a file from an older version is rebuilt without `--overwrite`: `int8_static`
+files built before the feature-block exclusion are replaced this way, while the other variants'
+files are kept.
 
 `final_eval.py --quant-root` evaluates every variant on test, first checking that each fp32
 variant's test top-1 matches its checkpoint's within 0.1 percentage points. It writes
@@ -108,9 +123,9 @@ python scripts/benchmark.py
 ```
 
 The benchmark measures CPU latency for one sequence per call. Defaults: models `gru`, `cnn` and
-`transformer` at seed 0, variants `torch_fp32`, `onnx_fp32`, `fp16`, `int8_dynamic` and
-`int8_static`, and 1, 2 and 4 intra-op threads. `--batch N` switches to a throughput mode whose
-output files carry a `_batch<N>` suffix.
+`transformer` at seed 0, variants `torch_fp32`, `onnx_fp32`, `fp16`, `int8_dynamic`,
+`int8_static` and `int8_static_full` (the ablation), and 1, 2 and 4 intra-op threads. `--batch N`
+switches to a throughput mode whose output files carry a `_batch<N>` suffix.
 
 Measurement protocol:
 
@@ -125,7 +140,7 @@ Measurement protocol:
 - **Rounds.** The full configuration list runs 3 times, in a new seeded random order each round,
   with a 3 s pause between configurations. The summary reports medians across rounds, plus
   `p50_spread_ms`, the largest minus the smallest p50. With the defaults, the pauses alone take
-  about 7 minutes.
+  about 8 minutes.
 - **Machine state.** Run on AC power, with the Windows power mode set to Best performance and
   other applications closed. `results/bench/bench_env.json` records the CPU flags detected at
   runtime (AVX2, AVX-512, VNNI), the clock at the start and end, the power source, the active
@@ -135,6 +150,123 @@ Measurement protocol:
 Outputs: `results/bench/bench_raw.csv` (one row per configuration and round),
 `results/bench/bench_env.json` and `results/tables/bench_summary.csv`. The summary's
 `p95_share_of_33ms_frame` column is p95 latency as a share of one 30 fps frame.
+
+## Web demo
+
+Live: <https://swapnil007-curious.github.io/edge-vision/>
+
+`web/` is an installable, offline-capable browser app (Vite and strict TypeScript, no UI
+framework) that recognises one isolated sign at a time from the webcam. MediaPipe Tasks
+HandLandmarker (two hands) and PoseLandmarker lite produce landmarks for each frame, a TypeScript
+port of the Python preprocessing (`web/src/preprocess.ts`) turns each captured segment into the
+model input, and onnxruntime-web runs the exported classifier. Every step runs in the browser.
+
+- **Scope.** Recognises single isolated signs from a 250-sign ASL vocabulary (the asl-signs
+  labels). It does not translate sentences.
+- **Privacy.** Video never leaves the device. There is no analytics or telemetry, and after the
+  first load the app makes no network requests: a Content-Security-Policy restricts every request
+  to the app's own origin, and a service worker serves the app, the model and the MediaPipe files
+  from the device. Spoken results, which are off by default, use on-device voices only.
+
+### Run locally
+
+Node 20.19 or newer, from `web/`:
+
+```powershell
+npm ci
+npm run fetch-assets   # MediaPipe wasm and .task models into public/mediapipe/ (not in git)
+npm run dev            # development server
+npm run build          # production build into dist/
+npm run preview        # serves dist/ at http://localhost:4173/
+```
+
+Camera access needs a secure context; `localhost` qualifies. `npm run fetch-assets` checks every
+file against a pinned or npm-provided sha256, writes `public/mediapipe/ASSETS.json` (URL, sha256,
+size, licence) and skips files that are already present.
+
+Tests: `npx tsc --noEmit`, `npx vitest run` (preprocessing against the Python golden vectors,
+segmentation, scoring, settings) and, after `npm run build`, `npx playwright install chromium`
+then `npx playwright test` (model and preprocessing parity in Chromium, offline reload through
+the service worker, and a camera smoke test with Chromium's fake camera). For a build under
+another base path, set `BASE_PATH` (for example `/edge-vision/`) for both the build and the tests.
+
+### Capture
+
+In automatic mode a segment starts after 3 consecutive frames with a hand and ends after 8
+frames without one, or after 3.0 s. Segments with fewer hand frames than the model's
+`min_hand_frames` are discarded. In "hold to record" mode, hold Space or press and hold the large
+button while signing. If the top softmax probability reaches the threshold stored in `meta.json`,
+the sign is shown; otherwise the app shows "Not sure" with the three most likely signs. All
+thresholds can be changed under Settings; settings are kept in `localStorage` when the browser
+allows it. Framing can be the full camera frame or a centred 3:4 portrait crop, applied before
+MediaPipe. Guidance messages report missing hands, hands partly out of frame, low light, and a
+signer too close or too far (shoulder distance in normalised units).
+
+### Exporting a model
+
+`scripts/export_web.py` copies one quantised variant to `web/public/model/model.onnx` and writes
+`web/public/model/meta.json` (labels, input layout, landmark order, preprocessing settings,
+sha256 of the ONNX file and of `best.pt`, opset, and the confidence threshold), plus the golden
+vectors in `web/tests/golden/`:
+
+```powershell
+python scripts/export_web.py --run results/runs/<model>_signer_independent/seed_0 --variant int8_static --quant-root results/quant --processed-dir data/processed
+```
+
+- **Variant rule.** Use `int8_static` if its val top-1 (from `quant_report.json`) is within 1.0
+  percentage point of fp32 val top-1, otherwise `fp32`. The script prints the comparison;
+  `--variant` decides, and `meta.json` records both.
+- **Confidence threshold.** Computed on val only, from the exported variant's softmax: the
+  smallest threshold t at which top-1 accuracy among val sequences with max probability >= t
+  reaches `--target-precision` (default 0.90). If no t reaches it, the t with the highest
+  accuracy among those accepting at least 20% of val is used and `meta.json` records a warning.
+  Coverage, accuracy above t and overall val top-1 are stored with it. The test split is never
+  read.
+- **Golden vectors.** `preprocess_cases.json` holds synthetic sequences built with the test
+  suite's fixture builders (mirroring, ties, hand fallback, gaps, short and long sequences and
+  both exclusion reasons) with the Python outputs; `model_cases.json` holds 16 processed val
+  inputs and the logits Python onnxruntime gives for them. The Python tests check that the
+  committed files still match the Python preprocessing and the committed model.
+- `--data-source synthetic` marks fixture data in `meta.json`; the app then shows a banner that
+  the model does not recognise real signs. `meta.json` always states which data the committed
+  model came from.
+- Commit `model.onnx` only while it is under 10 MB; `.gitignore` admits only that one ONNX file.
+
+### In-browser benchmark
+
+Start the camera, open Performance and press "Run 60-second benchmark", then sign a few times.
+The panel shows live FPS and rolling p50/p95 over the last 300 samples for the hand landmarker,
+pose landmarker, preprocessing, classifier and the total per frame. At the end a JSON file is
+downloaded with the user agent, `hardwareConcurrency`, `deviceMemory` where available, the actual
+camera resolution and frame rate, the settings, the model variant and sha256, raw per-frame and
+per-segment timings, p50/p95 summaries, end-to-end FPS, and 50 classifier runs on a fixed input.
+The camera is requested at 640 x 480 and 30 fps. The file is only saved locally.
+
+### Deployment
+
+`.github/workflows/pages.yml` builds `web/` with base `/edge-vision/` on every push to `main` and
+deploys it with `actions/upload-pages-artifact` and `actions/deploy-pages`. In the repository,
+Settings -> Pages -> Source must be set to "GitHub Actions". The `web` job in
+`.github/workflows/ci.yml` runs the type check, unit tests, build and browser tests.
+
+### Known limitations
+
+- **Landmarks differ from the training data.** asl-signs was built with MediaPipe Holistic; the
+  demo uses MediaPipe Tasks HandLandmarker and PoseLandmarker lite, whose landmarks, detection
+  thresholds and failure modes are not identical, so accuracy in the browser can be lower than on
+  the dataset.
+- **Hand assignment.** Holistic's `left_hand` is the signer's own left hand. HandLandmarker labels
+  handedness as if the image were mirrored, and the demo feeds it the unmirrored frame, so its
+  "Left" label goes to `right_hand` and "Right" to `left_hand`. A "Swap hands" setting reverses
+  this, and the Performance panel shows how often each hand sits at the matching pose wrist.
+- **Camera aspect ratio.** Coordinates are normalised by the image width and height, so a camera
+  whose aspect ratio differs from the recordings changes the geometry the model sees. The portrait
+  crop narrows the gap for landscape webcams.
+- **Isolated signs only.** Each segment is classified as one sign from the vocabulary; there is no
+  sentence-level recognition, and signs outside the vocabulary are still mapped to one of its
+  labels unless the confidence threshold rejects them.
+- **Single-threaded inference.** GitHub Pages cannot send COOP/COEP headers, so onnxruntime-web
+  runs without wasm threads. WebAssembly SIMD is required.
 
 ## Tests
 

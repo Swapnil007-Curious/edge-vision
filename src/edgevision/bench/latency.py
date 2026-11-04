@@ -25,13 +25,21 @@ from edgevision.runtime import OrtModel
 FloatArray = npt.NDArray[np.float32]
 Runner = Callable[[FloatArray], object]
 
-BENCH_VARIANTS = ("torch_fp32", "onnx_fp32", "fp16", "int8_dynamic", "int8_static")
+BENCH_VARIANTS = (
+    "torch_fp32",
+    "onnx_fp32",
+    "fp16",
+    "int8_dynamic",
+    "int8_static",
+    "int8_static_full",
+)
 # The scripts/quantize.py variant each ONNX benchmark variant runs.
 ONNX_VARIANT = {
     "onnx_fp32": "fp32",
     "fp16": "fp16",
     "int8_dynamic": "int8_dynamic",
     "int8_static": "int8_static",
+    "int8_static_full": "int8_static_full",
 }
 SHUFFLE_SEED = 0
 FRAME_MS = 1000.0 / 30.0  # One camera frame at 30 fps.

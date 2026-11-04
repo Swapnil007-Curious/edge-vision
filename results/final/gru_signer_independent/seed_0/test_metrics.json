@@ -1,0 +1,28 @@
+{
+  "model": "gru",
+  "split_mode": "signer_independent",
+  "seed": 0,
+  "evaluator": "torch_fp32",
+  "n_sequences": 16242,
+  "test_top1": 0.6075606452407339,
+  "test_top5": 0.8373353035340475,
+  "test_macro_f1": 0.5967556248532134,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.447037037037037
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.7061545580749653
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5481512429496553
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.6733588991653507
+    }
+  }
+}

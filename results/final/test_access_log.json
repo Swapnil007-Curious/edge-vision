@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp_utc": "2026-11-04T00:21:00.108732+00:00",
+    "git_commit": "43806b45ee559e7b15857e60976af812a65c50b8",
+    "git_dirty": true,
+    "runs_evaluated": [
+      "cnn_signer_dependent/seed_0",
+      "cnn_signer_independent/seed_0",
+      "cnn_signer_independent/seed_1",
+      "cnn_signer_independent/seed_2",
+      "gru_signer_dependent/seed_0",
+      "gru_signer_independent/seed_0",
+      "gru_signer_independent/seed_1",
+      "gru_signer_independent/seed_2",
+      "transformer_signer_dependent/seed_0",
+      "transformer_signer_independent/seed_0",
+      "transformer_signer_independent/seed_1",
+      "transformer_signer_independent/seed_2"
+    ]
+  }
+]

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edge-Vision</title>
+    <meta name="description" content="Recognises isolated signs from your webcam, entirely on this device." />
+    <meta name="theme-color" content="#0b0c0c" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <h1>Edge-Vision</h1>
+      <ul class="notices">
+        <li id="notice-scope">Recognises single isolated signs from a 250-sign ASL vocabulary. It does not translate sentences.</li>
+        <li id="notice-privacy">Video never leaves this device.</li>
+      </ul>
+      <p id="synthetic-warning" class="warning" hidden>
+        Demo build: this model was trained on synthetic data and does not recognise real signs.
+      </p>
+      <p id="status" class="status" role="status">Loading…</p>
+    </header>
+
+    <main id="main">
+      <section class="stage" aria-labelledby="camera-heading">
+        <h2 id="camera-heading">Camera</h2>
+        <div class="preview">
+          <video id="video" playsinline muted></video>
+          <canvas id="preview" role="img" aria-label="Mirrored camera preview with hand and pose landmarks"></canvas>
+          <p id="preview-placeholder" class="preview-placeholder">Camera is off.</p>
+        </div>
+        <p class="legend">
+          <span class="swatch swatch-left" aria-hidden="true"></span> your left hand and left wrist
+          <span class="swatch swatch-right" aria-hidden="true"></span> your right hand and right wrist
+        </p>
+        <ul id="guidance" class="guidance" aria-label="Camera guidance"></ul>
+        <div class="controls">
+          <button id="start" type="button" disabled>Start camera</button>
+          <button id="stop" type="button" disabled>Stop camera</button>
+          <fieldset class="mode">
+            <legend>Capture mode</legend>
+            <label><input type="radio" name="mode" value="auto" /> Automatic</label>
+            <label><input type="radio" name="mode" value="manual" /> Hold to record</label>
+          </fieldset>
+        </div>
+        <button id="record" type="button" class="record" aria-pressed="false" aria-describedby="record-help" hidden>
+          Hold to record a sign
+        </button>
+        <p id="record-help" class="help" hidden>Hold Space, or press and hold the button, while you sign. Release to recognise.</p>
+        <p id="segment-state" class="segment-state">Not capturing.</p>
+      </section>
+
+      <section class="result-panel" aria-labelledby="result-heading">
+        <h2 id="result-heading">Result</h2>
+        <p id="result-sign" class="result-sign">–</p>
+        <p id="result-detail" class="result-detail"></p>
+        <ol id="candidates" class="candidates" aria-label="Top candidates" hidden></ol>
+        <div id="announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+        <h3>History</h3>
+        <ol id="history" class="history" aria-label="Last 10 results"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="settings-heading">
+        <details id="settings-details">
+          <summary><h2 id="settings-heading">Settings</h2></summary>
+          <form id="settings" class="settings" novalidate>
+            <fieldset>
+              <legend>Segmentation</legend>
+              <label for="startFrames">Frames with a hand to start a segment</label>
+              <input id="startFrames" name="startFrames" type="number" min="1" max="30" step="1" required />
+              <label for="endFrames">Frames without a hand to end a segment</label>
+              <input id="endFrames" name="endFrames" type="number" min="1" max="60" step="1" required />
+              <label for="maxDurationS">Maximum segment length (seconds)</label>
+              <input id="maxDurationS" name="maxDurationS" type="number" min="0.5" max="10" step="0.1" required />
+              <label for="minHandFrames">Minimum frames with a hand (blank: model default)</label>
+              <input id="minHandFrames" name="minHandFrames" type="number" min="1" max="60" step="1" />
+            </fieldset>
+            <fieldset>
+              <legend>Recognition</legend>
+              <label for="confidenceThreshold">Confidence threshold, 0 to 1 (blank: calibrated value)</label>
+              <input id="confidenceThreshold" name="confidenceThreshold" type="number" min="0" max="1" step="0.01" />
+              <label class="check"><input id="speak" name="speak" type="checkbox" /> Speak recognised signs (on-device voice only)</label>
+            </fieldset>
+            <fieldset>
+              <legend>Camera</legend>
+              <label for="framing">Framing</label>
+              <select id="framing" name="framing">
+                <option value="full">Full frame</option>
+                <option value="portrait">Portrait centre crop (3:4)</option>
+              </select>
+              <label class="check"><input id="swapHands" name="swapHands" type="checkbox" /> Swap hands</label>
+              <label for="delegate">Landmark backend</label>
+              <select id="delegate" name="delegate">
+                <option value="CPU">CPU</option>
+                <option value="GPU">GPU (WebGL)</option>
+              </select>
+              <label for="lowLightThreshold">Low-light warning below brightness (0 to 255)</label>
+              <input id="lowLightThreshold" name="lowLightThreshold" type="number" min="0" max="255" step="1" required />
+              <label for="minShoulderDistance">"Too far" below shoulder distance</label>
+              <input id="minShoulderDistance" name="minShoulderDistance" type="number" min="0" max="2" step="0.01" required />
+              <label for="maxShoulderDistance">"Too close" above shoulder distance</label>
+              <input id="maxShoulderDistance" name="maxShoulderDistance" type="number" min="0" max="2" step="0.01" required />
+            </fieldset>
+            <div class="settings-actions">
+              <button id="reset-settings" type="button">Reset to defaults</button>
+              <p id="settings-note" class="help" role="status"></p>
+            </div>
+          </form>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="perf-heading">
+        <details id="perf-details" open>
+          <summary><h2 id="perf-heading">Performance</h2></summary>
+          <p class="fps">FPS: <output id="fps" aria-label="Frames per second">–</output></p>
+          <table class="perf-table">
+            <caption>Latency over the last 300 samples, in milliseconds</caption>
+            <thead>
+              <tr><th scope="col">Stage</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Samples</th></tr>
+            </thead>
+            <tbody id="perf-body"></tbody>
+          </table>
+          <dl class="diagnostics">
+            <dt>Camera</dt><dd id="diag-camera">–</dd>
+            <dt>Shoulder distance</dt><dd id="diag-shoulders">–</dd>
+            <dt>Brightness</dt><dd id="diag-light">–</dd>
+            <dt>Hands match pose wrists</dt><dd id="diag-wrists">–</dd>
+          </dl>
+          <button id="benchmark" type="button" disabled>Run 60-second benchmark</button>
+          <p id="benchmark-status" class="help" role="status">Start the camera first. Sign a few times during the run so whole segments are timed.</p>
+        </details>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p id="model-info">Model: loading…</p>
+      <p id="offline-status">Offline use: not yet available.</p>
+    </footer>
+  </body>
+</html>

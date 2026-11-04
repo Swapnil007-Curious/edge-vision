@@ -12,7 +12,8 @@ from typing import Any
 SUMMARY_FILE = "summary.json"
 CHECKPOINT_FILE = "best.pt"
 QUANT_REPORT_FILE = "quant_report.json"
-QUANT_VARIANTS = ("fp32", "fp16", "int8_dynamic", "int8_static")
+# int8_static_full is an ablation: int8_static without the FeatureBlock excluded from quantisation.
+QUANT_VARIANTS = ("fp32", "fp16", "int8_dynamic", "int8_static", "int8_static_full")
 
 
 def variant_file(variant: str) -> str:

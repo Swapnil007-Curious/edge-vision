@@ -25,12 +25,14 @@ from edgevision.evaluation.evaluators import OnnxEvaluator
 from edgevision.evaluation.metrics import top_k_accuracy
 from edgevision.evaluation.tables import PRIMARY_SPLIT_MODE
 from edgevision.export.onnx_export import DEFAULT_OPSET
+from edgevision.layout import INPUT_NAME
 from edgevision.quant.calibration import CALIBRATION_SAMPLES, TrainCalibrationReader
-from edgevision.quant.graph_stats import graph_stats
+from edgevision.quant.graph_stats import graph_stats, quantizers_of
 from edgevision.quant.variants import (
     DYNAMIC_SETTINGS,
     FP16_SETTINGS,
     STATIC_SETTINGS,
+    VARIANT_SCHEMA_VERSIONS,
     convert_fp16,
     describe,
     export_fp32,
@@ -38,6 +40,7 @@ from edgevision.quant.variants import (
     quantize_int8_static,
     read_metadata,
     save_with_metadata,
+    schema_version,
     scratch_path,
 )
 from edgevision.runs import (
@@ -47,7 +50,12 @@ from edgevision.runs import (
     CompletedRun,
     variant_file,
 )
-from edgevision.runtime import META_SOURCE_SHA256, META_VARIANT, onnxruntime_version
+from edgevision.runtime import (
+    META_SCHEMA_VERSION,
+    META_SOURCE_SHA256,
+    META_VARIANT,
+    onnxruntime_version,
+)
 from edgevision.train.data import SplitArrays, load_split_arrays
 from edgevision.utils.runinfo import collect_run_info
 
@@ -55,9 +63,11 @@ FloatArray = npt.NDArray[np.float32]
 
 FP16_MIN_AGREEMENT = 0.99
 VAL_DIFF_SAMPLES = 512
+STATIC_VARIANTS = ("int8_static", "int8_static_full")
 META_FP16_FEATURE_BLOCK = "edgevision.fp16_feature_block_fp32"
 META_FP16_FALLBACK = "edgevision.fp16_fallback_reason"
 META_CALIBRATION = "edgevision.calibration"
+META_EXCLUDED_NODES = "edgevision.excluded_nodes"
 QUANT_OPS_COLUMNS = (
     "model",
     "variant",
@@ -144,6 +154,7 @@ class _RunQuantizer:
         self.val: SplitArrays = load_split_arrays(processed_dir, self.splits_path, ["val"])["val"]
         self.failed: set[str] = set()
         self._fp32_logits: FloatArray | None = None
+        self._calibration_reader: TrainCalibrationReader | None = None
 
     def path(self, variant: str) -> Path:
         return self.out_dir / variant_file(variant)
@@ -155,23 +166,49 @@ class _RunQuantizer:
             self._fp32_logits = OnnxEvaluator(self.path("fp32")).predict(self.val.X)
         return self._fp32_logits
 
+    def calibration_reader(self) -> TrainCalibrationReader:
+        """One reader for every static variant, rewound, so they calibrate on the same data."""
+        if self._calibration_reader is None:
+            self._calibration_reader = TrainCalibrationReader(self.processed_dir, self.splits_path)
+        self._calibration_reader.rewind()
+        return self._calibration_reader
+
     def derived_metadata(self, variant: str, extra: dict[str, str] | None = None) -> dict[str, str]:
-        """The fp32 file's metadata with this variant's name and ``extra`` keys."""
-        return {**read_metadata(self.path("fp32")), META_VARIANT: variant, **(extra or {})}
+        """The fp32 file's metadata with this variant's name, schema version and ``extra``."""
+        return {
+            **read_metadata(self.path("fp32")),
+            META_VARIANT: variant,
+            META_SCHEMA_VERSION: str(VARIANT_SCHEMA_VERSIONS[variant]),
+            **(extra or {}),
+        }
 
     def build(self, variant: str) -> dict[str, Any]:
-        """Build ``variant`` unless a file from this checkpoint exists and overwrite is off."""
+        """Build ``variant`` unless a file from this checkpoint and the variant's current schema
+        version exists and overwrite is off.
+
+        A file from this checkpoint but another schema version is deleted and rebuilt, so a
+        failed rebuild cannot leave it behind for evaluation or benchmarks.
+        """
         path = self.path(variant)
+        rebuild_reason = None
         if path.exists() and not self.overwrite:
             metadata = read_metadata(path)
             if metadata.get(META_SOURCE_SHA256) != self.source_sha256:
                 raise StaleVariantError(
                     f"{path} was not built from the current {CHECKPOINT_FILE}; pass --overwrite"
                 )
-            return {"status": "existing", **self.recorded_details(variant, metadata)}
+            found, current = schema_version(metadata), VARIANT_SCHEMA_VERSIONS[variant]
+            if found == current:
+                details = self.recorded_details(variant, metadata)
+                return {"status": "existing", **with_exclusions(details)}
+            rebuild_reason = f"built with variant schema {found}; current is {current}"
+            path.unlink()
         with collect_tool_messages() as messages:
             details = self.builders()[variant](path)
-        return {"status": "built", **details, "tool_messages": dict(messages)}
+        entry = {"status": "built", **with_exclusions(details), "tool_messages": dict(messages)}
+        if rebuild_reason is not None:
+            entry["rebuild_reason"] = rebuild_reason
+        return entry
 
     def builders(self) -> dict[str, Callable[[Path], dict[str, Any]]]:
         return {
@@ -179,6 +216,7 @@ class _RunQuantizer:
             "fp16": self.build_fp16,
             "int8_dynamic": self.build_int8_dynamic,
             "int8_static": self.build_int8_static,
+            "int8_static_full": self.build_int8_static_full,
         }
 
     def recorded_details(self, variant: str, metadata: dict[str, str]) -> dict[str, Any]:
@@ -188,13 +226,15 @@ class _RunQuantizer:
             "fp16": describe(FP16_SETTINGS),
             "int8_dynamic": describe(DYNAMIC_SETTINGS),
             "int8_static": describe(STATIC_SETTINGS),
+            "int8_static_full": describe(STATIC_SETTINGS),
         }
         details: dict[str, Any] = {"settings": settings[variant]}
         if variant == "fp16":
             details["feature_block_fp32"] = json.loads(metadata[META_FP16_FEATURE_BLOCK])
             details["fallback_reason"] = metadata[META_FP16_FALLBACK] or None
-        if variant == "int8_static":
+        if variant in STATIC_VARIANTS:
             details["calibration"] = json.loads(metadata[META_CALIBRATION])
+            details["excluded_node_names"] = json.loads(metadata[META_EXCLUDED_NODES])
         return details
 
     def build_fp32(self, path: Path) -> dict[str, Any]:
@@ -250,7 +290,17 @@ class _RunQuantizer:
         return {"settings": describe(DYNAMIC_SETTINGS)}
 
     def build_int8_static(self, path: Path) -> dict[str, Any]:
-        reader = TrainCalibrationReader(self.processed_dir, self.splits_path)
+        """Input and FeatureBlock stay float32; quantisation starts at the projection."""
+        return self.build_static(path, "int8_static", exclude_feature_block=True)
+
+    def build_int8_static_full(self, path: Path) -> dict[str, Any]:
+        """Ablation: the earlier int8_static, with nothing excluded from quantisation."""
+        return self.build_static(path, "int8_static_full", exclude_feature_block=False)
+
+    def build_static(
+        self, path: Path, variant: str, *, exclude_feature_block: bool
+    ) -> dict[str, Any]:
+        reader = self.calibration_reader()
         calibration = {
             "split": "train",
             "requested_samples": CALIBRATION_SAMPLES,
@@ -259,16 +309,29 @@ class _RunQuantizer:
             "seed": reader.seed,
             "batch_size": reader.batch_size,
         }
-        model = quantize_int8_static(self.path("fp32"), path, reader)
-        extra = {META_CALIBRATION: json.dumps(calibration)}
-        save_with_metadata(model, path, self.derived_metadata("int8_static", extra))
-        return {"settings": describe(STATIC_SETTINGS), "calibration": calibration}
+        model, excluded = quantize_int8_static(
+            self.path("fp32"), path, reader, exclude_feature_block=exclude_feature_block
+        )
+        extra = {
+            META_CALIBRATION: json.dumps(calibration),
+            META_EXCLUDED_NODES: json.dumps(excluded),
+        }
+        save_with_metadata(model, path, self.derived_metadata(variant, extra))
+        return {
+            "settings": describe(STATIC_SETTINGS),
+            "calibration": calibration,
+            "excluded_node_names": excluded,
+        }
 
     def inspect(self, variant: str) -> dict[str, Any]:
         """Size, graph statistics, checker, onnxruntime load and val metrics of a built file."""
         path = self.path(variant)
         model = onnx.load(str(path))
-        details: dict[str, Any] = {"size_bytes": path.stat().st_size, "graph": graph_stats(model)}
+        details: dict[str, Any] = {
+            "size_bytes": path.stat().st_size,
+            "graph": graph_stats(model),
+            "input_quantised": bool(quantizers_of(model, {INPUT_NAME})),
+        }
         try:
             onnx.checker.check_model(str(path))
             details["onnx_checker"] = {"passed": True, "error": None}
@@ -322,6 +385,14 @@ class _RunQuantizer:
         return entries
 
 
+def with_exclusions(details: dict[str, Any]) -> dict[str, Any]:
+    """``details`` with excluded_node_count and excluded_node_names, the nodes passed to the
+    quantiser's nodes_to_exclude. Only int8_static excludes any; other variants report none."""
+    rest = dict(details)
+    names = list(rest.pop("excluded_node_names", []))
+    return {**rest, "excluded_node_count": len(names), "excluded_node_names": names}
+
+
 def _one_line(entry: dict[str, Any]) -> str:
     if entry["error"]:
         return f"FAILED {entry['error']}"
@@ -333,6 +404,12 @@ def _one_line(entry: dict[str, Any]) -> str:
         parts.append(f"agreement {val['agreement_with_fp32']:.4f}")
     if entry.get("feature_block_fp32"):
         parts.append("FeatureBlock kept in fp32")
+    if entry.get("excluded_node_count"):
+        parts.append(f"{entry['excluded_node_count']} FeatureBlock nodes excluded")
+    if entry.get("input_quantised"):
+        parts.append("input quantised")
+    if entry.get("rebuild_reason"):
+        parts.append(f"rebuilt: {entry['rebuild_reason']}")
     return ", ".join(parts)
 
 
@@ -347,7 +424,8 @@ def quantize_run(
 ) -> dict[str, Any]:
     """Build ``variants`` of ``run`` into ``out_dir`` and write quant_report.json there.
 
-    Existing variant files built from the same best.pt are reused unless ``overwrite``; one built
+    Existing variant files built from the same best.pt at their variant's current schema version
+    are reused unless ``overwrite``; one from an older schema version is rebuilt, and one built
     from another checkpoint is reported as stale. Failures are recorded, never raised.
     """
     out_dir.mkdir(parents=True, exist_ok=True)

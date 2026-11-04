@@ -1,6 +1,7 @@
 """Node statistics of an ONNX graph: what a quantiser converted and what stayed float."""
 
 from collections import Counter
+from collections.abc import Collection
 from typing import Any
 
 import onnx
@@ -14,6 +15,16 @@ INTEGER_COMPUTE_OPS = (
     "QLinearConv",
 )
 QDQ_OPS = ("QuantizeLinear", "DequantizeLinear")
+QUANTIZE_OPS = ("QuantizeLinear", "DynamicQuantizeLinear")
+
+
+def quantizers_of(model: onnx.ModelProto, tensors: Collection[str]) -> list[str]:
+    """Names of the QuantizeLinear and DynamicQuantizeLinear nodes that read any of ``tensors``."""
+    return [
+        node.name
+        for node in model.graph.node
+        if node.op_type in QUANTIZE_OPS and node.input[0] in tensors
+    ]
 
 
 def graph_stats(model: onnx.ModelProto) -> dict[str, Any]:

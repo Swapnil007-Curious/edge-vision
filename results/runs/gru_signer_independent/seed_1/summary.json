@@ -1,0 +1,38 @@
+{
+  "model": "gru",
+  "params": 710586,
+  "seed": 1,
+  "split_mode": "signer_independent",
+  "num_classes": 250,
+  "train_sequences": 58717,
+  "val_sequences": 12573,
+  "best_epoch": 34,
+  "best_val_top1": 0.6120257695060844,
+  "best_val_top5": 0.8256581563668178,
+  "best_val_macro_f1": 0.6000056897106014,
+  "epochs_run": 49,
+  "total_train_seconds": 147.575275013,
+  "device": "cuda",
+  "device_name": "Tesla T4",
+  "amp": true,
+  "torch_version": "2.11.0+cu130",
+  "determinism": "Seeded, cudnn.benchmark off, deterministic algorithms requested with warn_only=True. CPU runs repeat exactly for a seed; GPU runs may still be non-bitwise-deterministic.",
+  "processed_dir": "/kaggle/working/processed",
+  "splits_file": "splits_signer_independent.json",
+  "run_info": {
+    "git_commit": "43806b45ee559e7b15857e60976af812a65c50b8",
+    "git_dirty": true,
+    "python_version": "3.13.16",
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.00GHz",
+    "cpu_logical_cores": 4,
+    "cpu_physical_cores": 2,
+    "ram_total_bytes": 33658159104,
+    "packages": {
+      "numpy": "2.1.3",
+      "pandas": "2.3.3",
+      "pyarrow": "23.0.1"
+    },
+    "timestamp_utc": "2026-11-03T23:36:04.298860+00:00"
+  }
+}

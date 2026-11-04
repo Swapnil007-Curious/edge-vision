@@ -22,6 +22,7 @@ META_VARIANT = "edgevision.variant"
 META_SOURCE_SHA256 = "edgevision.source_checkpoint_sha256"
 META_LABEL_MAP = "edgevision.label_map"
 META_INPUT_LAYOUT = "edgevision.input_layout"
+META_SCHEMA_VERSION = "edgevision.variant_schema_version"
 
 
 def onnxruntime_version() -> str:

@@ -14,18 +14,34 @@ import numpy as np
 import onnx
 import pandas as pd
 import pytest
+import torch
 
 from conftest import SIGNS
 from edgevision.bench import env as bench_env
 from edgevision.bench.latency import BENCH_VARIANTS, FRAME_MS, RAW_COLUMNS, SUMMARY_COLUMNS
+from edgevision.data.landmarks import RIGHT_HAND
 from edgevision.evaluation.tables import QUANT_TEST_SUMMARY_COLUMNS
+from edgevision.layout import FRAME_DIM, INPUT_NAME, NUM_FRAMES
 from edgevision.models.config import MODEL_NAMES, default_model_config
-from edgevision.quant import calibration, pipeline
+from edgevision.models.features import STD_FLOOR
+from edgevision.models.registry import load_checkpoint
+from edgevision.quant import calibration, pipeline, variants
 from edgevision.quant.calibration import TrainCalibrationReader
 from edgevision.quant.pipeline import QUANT_OPS_COLUMNS, quantize_run, sha256_file
-from edgevision.quant.variants import FEATURE_SCOPE, read_metadata, save_with_metadata
+from edgevision.quant.variants import (
+    FEATURE_SCOPE,
+    feature_block_tensors,
+    read_metadata,
+    save_with_metadata,
+)
 from edgevision.runs import QUANT_VARIANTS, variant_file
-from edgevision.runtime import META_LABEL_MAP, META_SOURCE_SHA256, META_VARIANT, OrtModel
+from edgevision.runtime import (
+    META_LABEL_MAP,
+    META_SCHEMA_VERSION,
+    META_SOURCE_SHA256,
+    META_VARIANT,
+    OrtModel,
+)
 from edgevision.train.data import load_split_arrays, read_splits
 from quant_support import (
     TEST_SEQUENCES,
@@ -327,6 +343,180 @@ def test_fp16_falls_back_to_a_float32_feature_block(workspace, tmp_path, monkeyp
     assert again["variants"]["fp16"]["status"] == "existing"
     assert again["variants"]["fp16"]["feature_block_fp32"] is True
     assert again["variants"]["fp16"]["fallback_reason"] == entry["fallback_reason"]
+
+
+def quantized_tensors(path):
+    """Tensors read by the QuantizeLinear nodes of the ONNX file at ``path``."""
+    nodes = onnx.load(str(path)).graph.node
+    return {node.input[0] for node in nodes if node.op_type == "QuantizeLinear"}
+
+
+@pytest.mark.parametrize("model", MODEL_NAMES)
+def test_int8_static_keeps_the_input_and_feature_block_in_float32(workspace, model):
+    directory = workspace.quant_dir(model)
+    fp32 = onnx.load(str(directory / "fp32.onnx"))
+    output, internal = feature_block_tensors(fp32)
+    (projection,) = [node for node in fp32.graph.node if output in node.input]
+    assert projection.op_type == "MatMul"
+
+    read = quantized_tensors(directory / "int8_static.onnx")
+    assert INPUT_NAME not in read
+    assert not read & internal
+    assert output in read  # Quantisation starts at the projection input.
+
+    entry = workspace.report(model)["variants"]["int8_static"]
+    assert entry["input_quantised"] is False
+    assert entry["excluded_node_count"] == len(entry["excluded_node_names"]) > 0
+    assert all(name.startswith(FEATURE_SCOPE) for name in entry["excluded_node_names"])
+
+
+def test_int8_static_full_quantises_the_input_with_the_same_calibration(workspace):
+    for model in MODEL_NAMES:
+        entries = workspace.report(model)["variants"]
+        full, static = entries["int8_static_full"], entries["int8_static"]
+        assert full["input_quantised"] is True
+        assert INPUT_NAME in quantized_tensors(workspace.quant_dir(model) / "int8_static_full.onnx")
+        assert (full["excluded_node_count"], full["excluded_node_names"]) == (0, [])
+        assert full["settings"] == static["settings"]
+        assert full["calibration"] == static["calibration"]
+        for variant in ("fp32", "fp16", "int8_dynamic"):
+            entry = entries[variant]
+            assert (entry["excluded_node_count"], entry["input_quantised"]) == (0, False)
+
+
+def exposing(path, tensor, target):
+    """Write to ``target`` a copy of the ONNX file at ``path`` that also outputs ``tensor``."""
+    model = onnx.load(str(path))
+    model.graph.output.append(
+        onnx.helper.make_tensor_value_info(tensor, onnx.TensorProto.FLOAT, None)
+    )
+    onnx.save(model, str(target))
+    return target
+
+
+@pytest.mark.parametrize("model", MODEL_NAMES)
+def test_near_zero_coordinates_reach_the_projection_as_in_fp32(workspace, model, tmp_path):
+    """One landmark sits near the origin, where shoulder normalisation puts the torso centre,
+    and moves slightly. int8_static must hand the projection the same features as fp32."""
+    directory = workspace.quant_dir(model)
+    output, _ = feature_block_tensors(onnx.load(str(directory / "fp32.onnx")))
+    x = val_arrays(workspace, model).X[:1].copy()
+    phase = 2 * np.pi * np.arange(NUM_FRAMES) / NUM_FRAMES
+    column = 2 * RIGHT_HAND.start  # The right wrist's x; its y follows.
+    x[0, :, column] = 0.004 + 0.0002 * np.sin(phase)
+    x[0, :, column + 1] = -0.003 + 0.0002 * np.cos(phase)
+
+    block = load_checkpoint(workspace.runs.run(model).directory / "best.pt").model.features
+    with torch.no_grad():
+        expected = block(torch.from_numpy(x)).numpy()
+        velocity = block.raw_features(torch.from_numpy(x)).numpy()[0, 1:, FRAME_DIM + column]
+    assert (velocity != 0.0).all()  # Present and moving in every frame, as fp32 sees it.
+
+    features = {}
+    for variant in ("fp32", "int8_static", "int8_static_full"):
+        copy = exposing(directory / variant_file(variant), output, tmp_path / variant_file(variant))
+        (features[variant],) = OrtModel(copy).session.run([output], {INPUT_NAME: x})
+    np.testing.assert_allclose(features["fp32"], expected, rtol=0, atol=1e-5)
+    np.testing.assert_allclose(features["int8_static"], features["fp32"], rtol=0, atol=1e-5)
+
+    # Recorded, not asserted: what quantising the raw input does to the same features. Undoing the
+    # standardisation shows the landmark in input units, and whether its velocity was zeroed.
+    std, mean = block.std.clamp_min(STD_FLOOR).numpy(), block.mean.numpy()
+    raw = {variant: value * std + mean for variant, value in features.items()}
+    coordinates, velocities = [column, column + 1], [FRAME_DIM + column, FRAME_DIM + column + 1]
+    difference = np.abs(features["int8_static_full"] - features["fp32"])
+    print(
+        f"{model} int8_static_full vs fp32 FeatureBlock output: max abs difference "
+        f"{difference.max():.4g} (standardised); near-zero landmark in input units: coordinate "
+        f"difference {np.abs(raw['int8_static_full'] - raw['fp32'])[..., coordinates].max():.4g}, "
+        f"max |velocity| fp32 {np.abs(raw['fp32'][..., velocities]).max():.3g} vs "
+        f"int8_static_full {np.abs(raw['int8_static_full'][..., velocities]).max():.3g}"
+    )
+
+
+def rewrite_metadata(path, *, drop, values=None):
+    """Rewrite the metadata of an ONNX file without the keys in ``drop`` and with ``values``."""
+    model = onnx.load(str(path))
+    properties = {entry.key: entry.value for entry in model.metadata_props if entry.key not in drop}
+    onnx.helper.set_model_props(model, {**properties, **(values or {})})
+    onnx.save(model, str(path))
+
+
+def test_an_old_schema_int8_static_is_rebuilt_and_other_variants_are_kept(workspace, tmp_path):
+    results = tmp_path / "results"
+    directory = results / "quant" / f"cnn_{INDEPENDENT}" / "seed_0"
+    shutil.copytree(workspace.quant_dir("cnn"), directory)
+    # A run quantised before schema versions: no int8_static_full, and an int8_static built
+    # without exclusions.
+    (directory / "int8_static_full.onnx").replace(directory / "int8_static.onnx")
+    rewrite_metadata(
+        directory / "int8_static.onnx",
+        drop=(META_SCHEMA_VERSION, pipeline.META_EXCLUDED_NODES),
+        values={META_VARIANT: "int8_static"},
+    )
+    for variant in ("fp32", "fp16", "int8_dynamic"):
+        rewrite_metadata(directory / variant_file(variant), drop=(META_SCHEMA_VERSION,))
+    stamps = {path.name: path.stat().st_mtime_ns for path in directory.glob("*.onnx")}
+
+    quantize = load_script("quantize")
+    assert quantize.main(quantize_args(workspace.runs, results, "--models", "cnn")) == 0
+
+    report = json.loads((directory / "quant_report.json").read_text("utf-8"))
+    statuses = {variant: entry["status"] for variant, entry in report["variants"].items()}
+    assert statuses == {
+        "fp32": "existing",
+        "fp16": "existing",
+        "int8_dynamic": "existing",
+        "int8_static": "built",
+        "int8_static_full": "built",
+    }
+    for variant in ("fp32", "fp16", "int8_dynamic"):
+        assert (directory / variant_file(variant)).stat().st_mtime_ns == stamps[
+            variant_file(variant)
+        ]
+    assert (directory / "int8_static.onnx").stat().st_mtime_ns != stamps["int8_static.onnx"]
+    static = report["variants"]["int8_static"]
+    assert static["rebuild_reason"] == "built with variant schema 1; current is 2"
+    assert static["input_quantised"] is False
+    assert read_metadata(directory / "int8_static.onnx")[META_SCHEMA_VERSION] == "2"
+
+    # Once rebuilt, the file is current and reused.
+    assert quantize.main(quantize_args(workspace.runs, results, "--models", "cnn")) == 0
+    report = json.loads((directory / "quant_report.json").read_text("utf-8"))
+    assert {entry["status"] for entry in report["variants"].values()} == {"existing"}
+
+
+def test_int8_static_fails_if_its_exclusions_find_nothing_or_are_ignored(
+    workspace, tmp_path, monkeypatch
+):
+    def build():
+        return quantize_run(
+            workspace.runs.run("cnn"),
+            workspace.runs.processed.root,
+            tmp_path,
+            variants=("fp32", "int8_static"),
+            log=lambda _: None,
+        )
+
+    real = variants.quantize_static
+
+    def ignoring_exclusions(*args, nodes_to_exclude=None, **kwargs):
+        return real(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(variants, "quantize_static", ignoring_exclusions)
+        report = build()
+    entry = report["variants"]["int8_static"]
+    assert (report["failures"], entry["status"]) == (["int8_static"], "failed")
+    assert "landmarks_QuantizeLinear" in entry["error"]
+    assert not (tmp_path / "int8_static.onnx").exists()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(variants, "FEATURE_SCOPE", "/no_such_scope/")
+        report = build()
+    assert report["failures"] == ["int8_static"]
+    assert "no nodes under '/no_such_scope/'" in report["variants"]["int8_static"]["error"]
+    assert not (tmp_path / "int8_static.onnx").exists()
 
 
 def test_calibration_reader_reads_the_train_split_only(workspace, monkeypatch):

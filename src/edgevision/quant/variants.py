@@ -1,7 +1,9 @@
-"""Builders for the ONNX variants of one checkpoint: fp32, fp16, int8 dynamic and int8 static.
+"""Builders for the ONNX variants of one checkpoint: fp32, fp16, int8 dynamic, int8 static, and
+int8 static without the FeatureBlock exclusion (int8_static_full, an ablation).
 
 Each builder returns or writes an onnx.ModelProto; save_with_metadata writes it through a
-temporary name with edgevision metadata (variant, label map, input layout, checkpoint sha256).
+temporary name with edgevision metadata (variant, schema version, label map, input layout,
+checkpoint sha256).
 """
 
 import json
@@ -28,13 +30,32 @@ from onnxruntime.transformers.float16 import (  # type: ignore[import-untyped]
 from onnxruntime.transformers.onnx_model import OnnxModel  # type: ignore[import-untyped]
 
 from edgevision.export.onnx_export import export_onnx
-from edgevision.layout import layout_dict
+from edgevision.layout import INPUT_NAME, layout_dict
 from edgevision.models.registry import load_checkpoint
 from edgevision.quant.calibration import TrainCalibrationReader
-from edgevision.runtime import META_INPUT_LAYOUT, META_LABEL_MAP, META_SOURCE_SHA256, META_VARIANT
+from edgevision.quant.graph_stats import quantizers_of
+from edgevision.runtime import (
+    META_INPUT_LAYOUT,
+    META_LABEL_MAP,
+    META_SCHEMA_VERSION,
+    META_SOURCE_SHA256,
+    META_VARIANT,
+)
 
 # Exporter scope of SignClassifier.features, which computes velocity and standardisation.
 FEATURE_SCOPE = "/features/"
+
+# Version of each variant's build recipe, stored in its file. scripts/quantize.py rebuilds a file
+# whose recorded version differs, without --overwrite. Files written before versioning carry no
+# version and count as UNVERSIONED_SCHEMA. Bump a variant's entry when its recipe changes.
+UNVERSIONED_SCHEMA = 1
+VARIANT_SCHEMA_VERSIONS: dict[str, int] = {
+    "fp32": 1,
+    "fp16": 1,
+    "int8_dynamic": 1,
+    "int8_static": 2,  # 2: FeatureBlock nodes excluded from quantisation.
+    "int8_static_full": 1,
+}
 
 FP16_SETTINGS: dict[str, Any] = {"keep_io_types": True}
 DYNAMIC_SETTINGS: dict[str, Any] = {"weight_type": QuantType.QInt8, "per_channel": True}
@@ -63,6 +84,11 @@ def read_metadata(path: Path) -> dict[str, str]:
     return {entry.key: entry.value for entry in model.metadata_props}
 
 
+def schema_version(metadata: Mapping[str, str]) -> int:
+    """The variant schema version a file was built with; UNVERSIONED_SCHEMA if it has none."""
+    return int(metadata.get(META_SCHEMA_VERSION, UNVERSIONED_SCHEMA))
+
+
 def save_with_metadata(model: onnx.ModelProto, path: Path, metadata: Mapping[str, str]) -> None:
     """Merge ``metadata`` into the model's properties and write it atomically to ``path``."""
     properties = {entry.key: entry.value for entry in model.metadata_props}
@@ -80,6 +106,27 @@ def feature_block_nodes(model: onnx.ModelProto) -> list[str]:
     return names
 
 
+def feature_block_tensors(model: onnx.ModelProto) -> tuple[str, set[str]]:
+    """(output, internal) of the FeatureBlock in an unquantised graph.
+
+    ``output`` is the one tensor the block hands to the rest of the model, the projection input;
+    ``internal`` is every other tensor its nodes produce. Call this before quantisation: the
+    quantiser names the QuantizeLinear nodes it inserts after their tensors, so in a quantised
+    graph they would match the scope too.
+    """
+    block = set(feature_block_nodes(model))
+    produced = {name for node in model.graph.node if node.name in block for name in node.output}
+    read_outside = {
+        name for node in model.graph.node if node.name not in block for name in node.input
+    }
+    read_outside |= {output.name for output in model.graph.output}
+    outputs = produced & read_outside
+    if len(outputs) != 1:
+        raise ValueError(f"expected one FeatureBlock output tensor, found {sorted(outputs)}")
+    (output,) = outputs
+    return output, produced - outputs
+
+
 def export_fp32(checkpoint: Path, path: Path, source_sha256: str) -> None:
     """Export best.pt with export_onnx (opset 17) and attach the metadata every variant copies."""
     loaded = load_checkpoint(checkpoint)
@@ -88,6 +135,7 @@ def export_fp32(checkpoint: Path, path: Path, source_sha256: str) -> None:
         export_onnx(loaded.model, scratch)
         metadata = {
             META_VARIANT: "fp32",
+            META_SCHEMA_VERSION: str(VARIANT_SCHEMA_VERSIONS["fp32"]),
             META_SOURCE_SHA256: source_sha256,
             META_LABEL_MAP: json.dumps(
                 {str(index): sign for index, sign in loaded.label_map.items()}
@@ -142,14 +190,34 @@ def quantize_int8_dynamic(fp32_path: Path, path: Path) -> onnx.ModelProto:
 
 
 def quantize_int8_static(
-    fp32_path: Path, path: Path, reader: TrainCalibrationReader
-) -> onnx.ModelProto:
-    """quant_pre_process, then QDQ static quantisation calibrated on ``reader``."""
+    fp32_path: Path, path: Path, reader: TrainCalibrationReader, *, exclude_feature_block: bool
+) -> tuple[onnx.ModelProto, list[str]]:
+    """quant_pre_process, then QDQ static quantisation calibrated on ``reader``.
+
+    With ``exclude_feature_block`` every FeatureBlock node of the preprocessed graph is passed as
+    nodes_to_exclude, so the input, velocity and standardisation stay float32 and quantisation
+    starts at the projection input. Quantising the raw input would round coordinates to an 8-bit
+    grid before velocity is taken, and could turn small coordinates into exact zeros, which the
+    block reads as missing points. The result is refused if any QuantizeLinear still reads the
+    input or a tensor inside the block. Without it (the int8_static_full ablation) nothing is
+    excluded. Returns the model and the excluded node names.
+    """
     preprocessed, scratch = scratch_path(path, "preprocessed"), scratch_path(path, "static")
     try:
         quant_pre_process(fp32_path, preprocessed)
-        quantize_static(preprocessed, scratch, reader, **STATIC_SETTINGS)
-        return onnx.load(str(scratch))
+        graph = onnx.load(str(preprocessed))
+        excluded = feature_block_nodes(graph) if exclude_feature_block else []
+        quantize_static(preprocessed, scratch, reader, nodes_to_exclude=excluded, **STATIC_SETTINGS)
+        model = onnx.load(str(scratch))
     finally:
         preprocessed.unlink(missing_ok=True)
         scratch.unlink(missing_ok=True)
+    if exclude_feature_block:
+        _, internal = feature_block_tensors(graph)
+        offending = quantizers_of(model, {INPUT_NAME, *internal})
+        if offending:
+            raise ValueError(
+                f"quantisation reached the input or FeatureBlock despite nodes_to_exclude: "
+                f"{sorted(offending)}"
+            )
+    return model, excluded

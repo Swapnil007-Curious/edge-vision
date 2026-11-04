@@ -1,0 +1,28 @@
+{
+  "model": "transformer",
+  "split_mode": "signer_independent",
+  "seed": 0,
+  "evaluator": "torch_fp32",
+  "n_sequences": 16242,
+  "test_top1": 0.623506957271272,
+  "test_top5": 0.822435660632927,
+  "test_macro_f1": 0.6087987755902019,
+  "per_participant": {
+    "30680": {
+      "n_sequences": 2700,
+      "top1": 0.45444444444444443
+    },
+    "37779": {
+      "n_sequences": 4322,
+      "top1": 0.7133271633503008
+    },
+    "49445": {
+      "n_sequences": 4787,
+      "top1": 0.5579695007311468
+    },
+    "62590": {
+      "n_sequences": 4433,
+      "top1": 0.7096774193548387
+    }
+  }
+}

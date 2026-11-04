@@ -1,8 +1,10 @@
 """Build fp32, fp16, int8 dynamic and int8 static ONNX variants of every completed
-signer-independent run, check them on val, and write results/tables/quant_ops_summary.csv.
+signer-independent run, plus int8_static_full (int8 static with nothing excluded, an ablation),
+check them on val, and write results/tables/quant_ops_summary.csv.
 
 A variant that fails is recorded in its run's quant_report.json and the batch continues; the exit
-code is 1 if anything failed.
+code is 1 if anything failed. A file built with an older schema version of its variant is
+rebuilt even without --overwrite.
 """
 
 import argparse
@@ -27,7 +29,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", choices=MODEL_NAMES, default=list(MODEL_NAMES))
     parser.add_argument("--seeds", nargs="+", type=int, help="default: every seed found")
     parser.add_argument(
-        "--overwrite", action="store_true", help="rebuild variant files that already exist"
+        "--overwrite",
+        action="store_true",
+        help="rebuild variant files that already exist (older-schema files are always rebuilt)",
     )
     return parser.parse_args(argv)
 
