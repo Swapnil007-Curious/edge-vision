@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from edgevision.models.config import CNNConfig
-from edgevision.models.features import FEATURE_DIM, SignClassifier
+from edgevision.models.features import SignClassifier, StandardisedFeatures
 
 
 class ResidualBlock(nn.Module):
@@ -28,9 +28,11 @@ class ResidualBlock(nn.Module):
 
 
 class TemporalCNN(SignClassifier):
-    def __init__(self, num_classes: int, cfg: CNNConfig) -> None:
-        super().__init__()
-        self.proj = nn.Linear(FEATURE_DIM, cfg.channels)
+    def __init__(
+        self, num_classes: int, cfg: CNNConfig, features: StandardisedFeatures | None = None
+    ) -> None:
+        super().__init__(features)
+        self.proj = nn.Linear(self.features.output_dim, cfg.channels)
         self.blocks = nn.Sequential(
             *(
                 ResidualBlock(cfg.channels, cfg.kernel_size, cfg.block_dropout)

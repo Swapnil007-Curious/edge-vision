@@ -615,7 +615,15 @@ def test_final_eval_quant_root_adds_tables_and_flagless_results_are_unchanged(wo
         path.relative_to(after).as_posix() for path in after.rglob("*") if path.is_file()
     )
     for name in files:
-        if name != ACCESS_LOG.as_posix():  # Timestamps differ; compared below.
+        if name == "tables/top_confusions.csv":
+            # The script labels this table itself, so only it gains the experiment column the
+            # library adds to every other table; the rest of the file is unchanged.
+            confusions = pd.read_csv(after / name, keep_default_na=False)
+            assert (confusions["experiment"] == confusions["model"] + "_" + INDEPENDENT).all()
+            stripped = confusions.drop(columns="experiment").to_csv(index=False).encode()
+            expected = (before / name).read_bytes()
+            assert stripped.replace(b"\r\n", b"\n") == expected.replace(b"\r\n", b"\n"), name
+        elif name != ACCESS_LOG.as_posix():  # Timestamps differ; compared below.
             assert (after / name).read_bytes() == (before / name).read_bytes(), name
     old_log, new_log = read_json(before / ACCESS_LOG), read_json(after / ACCESS_LOG)
     assert [entry["runs_evaluated"] for entry in new_log] == [

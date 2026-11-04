@@ -1,0 +1,42 @@
+{
+  "description": "v1 outputs on the synthetic fixtures, recorded with the code before the v2 feature set (git commit 9bf4448); see tests/v1_baseline.py",
+  "preprocess_digest": "59dc649415ebcbb6d8edf6765e83575befed78282dd7a4e59fed401c5b834449",
+  "metrics_platform": "Windows-AMD64-torch2.15.0+cpu",
+  "metrics": {
+    "epoch": [
+      1,
+      2,
+      3
+    ],
+    "train_loss": [
+      258.9783528645833,
+      163.41749674479166,
+      180.748681640625
+    ],
+    "train_top1": [
+      0.2833333333333333,
+      0.19166666666666668,
+      0.19166666666666668
+    ],
+    "val_loss": [
+      1.5905976295471191,
+      1.581636667251587,
+      1.5820105075836182
+    ],
+    "val_top1": [
+      0.2,
+      0.2,
+      0.2
+    ],
+    "val_top5": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "lr": [
+      0.001,
+      0.0006545084971874737,
+      9.549150281252633e-05
+    ]
+  }
+}

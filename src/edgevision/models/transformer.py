@@ -7,9 +7,8 @@ paths complicate export, and plain Linear + MatMul ops are what INT8 quantisatio
 import torch
 from torch import nn
 
-from edgevision.layout import NUM_FRAMES
 from edgevision.models.config import TransformerConfig
-from edgevision.models.features import FEATURE_DIM, SignClassifier
+from edgevision.models.features import SignClassifier, StandardisedFeatures
 
 
 class SelfAttention(nn.Module):
@@ -59,10 +58,16 @@ class EncoderLayer(nn.Module):
 
 
 class TinyTransformer(SignClassifier):
-    def __init__(self, num_classes: int, cfg: TransformerConfig) -> None:
-        super().__init__()
-        self.proj = nn.Linear(FEATURE_DIM, cfg.d_model)
-        self.position = nn.Parameter(torch.zeros(1, NUM_FRAMES, cfg.d_model))
+    def __init__(
+        self,
+        num_classes: int,
+        cfg: TransformerConfig,
+        features: StandardisedFeatures | None = None,
+    ) -> None:
+        super().__init__(features)
+        self.proj = nn.Linear(self.features.output_dim, cfg.d_model)
+        frames = self.features.layout.num_frames
+        self.position = nn.Parameter(torch.zeros(1, frames, cfg.d_model))
         nn.init.normal_(self.position, std=0.02)
         self.layers = nn.Sequential(*(EncoderLayer(cfg) for _ in range(cfg.num_layers)))
         self.norm = nn.LayerNorm(cfg.d_model)

@@ -20,6 +20,7 @@ import psutil  # type: ignore[import-untyped]
 import torch
 
 from edgevision.models.registry import load_checkpoint
+from edgevision.runs import PRIMARY_SPLIT_MODE, run_name
 from edgevision.runtime import OrtModel
 
 FloatArray = npt.NDArray[np.float32]
@@ -46,6 +47,7 @@ FRAME_MS = 1000.0 / 30.0  # One camera frame at 30 fps.
 RAW_COLUMNS = (
     "round",
     "position",
+    "experiment",
     "model",
     "seed",
     "variant",
@@ -66,6 +68,7 @@ RAW_COLUMNS = (
     "file",
 )
 SUMMARY_COLUMNS = (
+    "experiment",
     "model",
     "variant",
     "threads",
@@ -81,6 +84,7 @@ SUMMARY_COLUMNS = (
 
 @dataclass(frozen=True)
 class BenchConfig:
+    experiment: str
     model: str
     seed: int
     variant: str
@@ -163,6 +167,7 @@ def measure(config: BenchConfig, inputs: FloatArray, *, warmup: int, iters: int)
     rss_after = process.memory_info().rss
     durations = time_calls(runner, inputs, batch=config.batch, warmup=warmup, iters=iters)
     return {
+        "experiment": config.experiment,
         "model": config.model,
         "seed": config.seed,
         "variant": config.variant,
@@ -185,13 +190,16 @@ def round_orders(n_configs: int, rounds: int, seed: int = SHUFFLE_SEED) -> list[
 
 
 def summarize_rounds(raw: pd.DataFrame) -> pd.DataFrame:
-    """Per (model, variant, threads): medians of p50, p95, p99 and throughput across rounds (and
-    seeds); p50_spread_ms is the largest minus the smallest p50."""
+    """Per (experiment, variant, threads): medians of p50, p95, p99 and throughput across rounds
+    (and seeds); p50_spread_ms is the largest minus the smallest p50. Rows without an experiment
+    are from v1 experiments, <model>_signer_independent."""
+    if "experiment" not in raw.columns:
+        raw = raw.assign(experiment=[run_name(m, PRIMARY_SPLIT_MODE) for m in raw["model"]])
     frame = raw.assign(
         variant=pd.Categorical(raw["variant"], categories=BENCH_VARIANTS, ordered=True)
     )
     table = (
-        frame.groupby(["model", "variant", "threads"], sort=True, observed=True)
+        frame.groupby(["model", "experiment", "variant", "threads"], sort=True, observed=True)
         .agg(
             p50_ms=("p50_ms", "median"),
             p95_ms=("p95_ms", "median"),

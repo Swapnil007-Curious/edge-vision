@@ -5,14 +5,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from edgevision.runs import run_dir
+from edgevision.runs import experiment_run_dir
 from edgevision.train.config import load_train_config
 from edgevision.train.loop import RunExistsError, run_training
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True, help="experiments/train_<model>.yaml")
+    parser.add_argument("--config", type=Path, required=True, help="experiments/train_*.yaml")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--processed-dir", type=Path, help="override processed_dir")
     parser.add_argument("--output-root", type=Path, help="override output_root")
@@ -37,7 +37,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunExistsError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    directory = run_dir(cfg.output_root, cfg.model.name, cfg.split.mode, args.seed)
+    directory = experiment_run_dir(cfg.output_root, cfg.experiment_name, args.seed)
     print(
         f"best val top-1 {summary['best_val_top1']:.4f} (top-5 {summary['best_val_top5']:.4f}, "
         f"macro-F1 {summary['best_val_macro_f1']:.4f}) at epoch {summary['best_epoch']}; "

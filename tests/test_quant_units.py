@@ -207,7 +207,8 @@ def test_quant_ops_summary_counts_failures_and_leaves_their_sizes_empty():
         {"model": "cnn", "error": "FileNotFoundError: best.pt", "variants": {}},
     ]
     table = quant_ops_summary(reports).set_index("variant")
-    assert table.columns.tolist() == list(QUANT_OPS_COLUMNS[0:1] + QUANT_OPS_COLUMNS[2:])
+    assert table.columns.tolist() == list(QUANT_OPS_COLUMNS[0:2] + QUANT_OPS_COLUMNS[3:])
+    assert (table["experiment"] == "cnn_signer_independent").all()
     assert table.loc["fp32", "failures"] == 1  # The second run failed as a whole.
     assert table.loc["int8_dynamic", "failures"] == 2
     assert np.isnan(table.loc["int8_dynamic", "size_mb"])

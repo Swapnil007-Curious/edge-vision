@@ -1,12 +1,14 @@
 """ONNX export of a full model, FeatureBlock included."""
 
+import itertools
 import warnings
 from pathlib import Path
 
 import onnx
 import torch
 
-from edgevision.layout import FRAME_DIM, INPUT_NAME, NUM_FRAMES, OUTPUT_NAME
+from edgevision.layout import INPUT_NAME, OUTPUT_NAME, V1_LAYOUT, InputLayout
+from edgevision.models.features import SignClassifier, StandardisedFeatures
 
 DEFAULT_OPSET = 17
 # A batch of 1 could let the tracer fold the batch size into a constant; 2 cannot.
@@ -26,15 +28,29 @@ _EXPECTED_WARNINGS: tuple[tuple[type[Warning], str, str], ...] = (
 )
 
 
-def export_onnx(model: torch.nn.Module, path: Path, opset: int = DEFAULT_OPSET) -> Path:
-    """Export with input "landmarks" (batch, 32, 100) and output "logits", batch axis dynamic.
+def export_onnx(
+    model: torch.nn.Module,
+    path: Path,
+    opset: int = DEFAULT_OPSET,
+    layout: InputLayout | None = None,
+) -> Path:
+    """Export with input "landmarks" (batch, 32, frame_dim) and output "logits", batch axis
+    dynamic. ``layout`` defaults to the model's feature-block layout (v1: frame_dim 100).
 
     Uses the TorchScript exporter (dynamo=False): the dynamo exporter needs onnxscript, which
     this project does not depend on. The model is put in eval mode and left there.
     """
+    if layout is None:
+        if isinstance(model, SignClassifier):
+            layout = model.features.layout
+        elif isinstance(model, StandardisedFeatures):
+            layout = model.layout
+        else:
+            layout = V1_LAYOUT
     model.eval()
-    device = next(model.parameters()).device
-    example = torch.zeros(_TRACE_BATCH, NUM_FRAMES, FRAME_DIM, device=device)
+    tensors = itertools.chain(model.parameters(), model.buffers())
+    device = next(tensors, torch.zeros(0)).device  # A feature block alone has only buffers.
+    example = torch.zeros(_TRACE_BATCH, layout.num_frames, layout.frame_dim, device=device)
     path.parent.mkdir(parents=True, exist_ok=True)
     with warnings.catch_warnings(), torch.no_grad():
         for category, message, module in _EXPECTED_WARNINGS:

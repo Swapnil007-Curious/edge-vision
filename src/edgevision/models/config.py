@@ -6,8 +6,10 @@ from pydantic import Field, model_validator
 
 from edgevision.config import _StrictModel
 
-ModelName = Literal["gru", "cnn", "transformer"]
+ModelName = Literal["gru", "cnn", "transformer", "hybrid"]
+# The v1 architectures: the v1 grid, quantisation and benchmarks iterate over these.
 MODEL_NAMES: tuple[ModelName, ...] = ("gru", "cnn", "transformer")
+ALL_MODEL_NAMES: tuple[ModelName, ...] = (*MODEL_NAMES, "hybrid")
 
 
 class GRUConfig(_StrictModel):
@@ -51,12 +53,41 @@ class TransformerConfig(_StrictModel):
         return self
 
 
-ModelConfig = Annotated[GRUConfig | CNNConfig | TransformerConfig, Field(discriminator="name")]
+class HybridConfig(_StrictModel):
+    """CNN-transformer hybrid: ``num_stages`` x (``conv_blocks`` conv blocks + one transformer
+    block). The head dropout is "late": 0.0 until ``late_dropout_start`` of the epochs are done."""
+
+    name: Literal["hybrid"] = "hybrid"
+    dim: int = Field(default=256, ge=1)
+    num_stages: int = Field(default=3, ge=1)
+    conv_blocks: int = Field(default=2, ge=1)
+    kernel_size: int = Field(default=17, ge=1)
+    expansion_dim: int = Field(default=512, ge=1)
+    conv_dropout: float = Field(default=0.2, ge=0.0, lt=1.0)
+    num_heads: int = Field(default=4, ge=1)
+    ff_dim: int = Field(default=512, ge=1)
+    attention_dropout: float = Field(default=0.1, ge=0.0, lt=1.0)
+    head_dropout: float = Field(default=0.4, ge=0.0, lt=1.0)
+    late_dropout_start: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_shapes(self) -> Self:
+        if self.kernel_size % 2 == 0:
+            raise ValueError("kernel_size must be odd so 'same' padding keeps the length")
+        if self.dim % self.num_heads:
+            raise ValueError("dim must be divisible by num_heads")
+        return self
 
 
-def default_model_config(name: ModelName) -> GRUConfig | CNNConfig | TransformerConfig:
+AnyModelConfig = GRUConfig | CNNConfig | TransformerConfig | HybridConfig
+ModelConfig = Annotated[AnyModelConfig, Field(discriminator="name")]
+
+
+def default_model_config(name: ModelName) -> AnyModelConfig:
     if name == "gru":
         return GRUConfig()
     if name == "cnn":
         return CNNConfig()
+    if name == "hybrid":
+        return HybridConfig()
     return TransformerConfig()

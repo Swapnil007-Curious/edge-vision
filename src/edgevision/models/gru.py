@@ -4,14 +4,16 @@ import torch
 from torch import nn
 
 from edgevision.models.config import GRUConfig
-from edgevision.models.features import FEATURE_DIM, SignClassifier
+from edgevision.models.features import SignClassifier, StandardisedFeatures
 
 
 class GRUClassifier(SignClassifier):
-    def __init__(self, num_classes: int, cfg: GRUConfig) -> None:
-        super().__init__()
+    def __init__(
+        self, num_classes: int, cfg: GRUConfig, features: StandardisedFeatures | None = None
+    ) -> None:
+        super().__init__(features)
         self.proj = nn.Sequential(
-            nn.Linear(FEATURE_DIM, cfg.proj_dim),
+            nn.Linear(self.features.output_dim, cfg.proj_dim),
             nn.LayerNorm(cfg.proj_dim),
             nn.GELU(),
             nn.Dropout(cfg.input_dropout),

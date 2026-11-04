@@ -1,0 +1,21 @@
+# v2 landmark selection: preprocess_default.yaml with pose 0-16 (nose, eyes, ears, mouth corners,
+# shoulders, elbows, wrists), so L = 42 + 17 = 59. The split section is identical to v1's, so the
+# signer-independent split holds the same participants.
+preprocess:
+  data_root: /kaggle/input/asl-signs
+  output_dir: /kaggle/working/processed_v2
+  num_frames: 32
+  use_z: false
+  pose_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+  min_hand_frames: 3
+  limit: null
+  num_workers: 4
+  seed: 42
+
+split:
+  mode: signer_independent
+  n_test_signers: 4
+  n_val_signers: 3
+  val_fraction: 0.1
+  test_fraction: 0.1
+  seed: 42

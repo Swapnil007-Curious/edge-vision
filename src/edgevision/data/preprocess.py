@@ -16,12 +16,14 @@ from edgevision.data.landmarks import (
     FIRST_POSE_SLOT,
     LEFT_HAND,
     N_ALL_LANDMARKS,
+    NOSE,
     RIGHT_HAND,
     TYPE_CODES,
     TYPE_OFFSETS,
     TYPE_SIZES,
     mirror_permutation,
     num_selected,
+    pose_slot,
     selection_table,
     shoulder_slots,
 )
@@ -181,6 +183,39 @@ def fill_missing(coords: FloatArray) -> Float32Array:
     return features
 
 
+class AspectMeasurement(NamedTuple):
+    """Per-frame face/shoulder geometry of one sequence's kept frames, before normalisation.
+
+    ``ratios`` holds r = |y_nose - y_shoulder_mid| / |x_shoulder_left - x_shoulder_right| for
+    each kept frame where the nose and both shoulders are finite and the shoulders' x differ;
+    ``shoulder_frames`` counts the kept frames where both shoulders are finite.
+    """
+
+    ratios: FloatArray
+    shoulder_frames: int
+    kept_frames: int
+
+
+def aspect_measurement(
+    coords: FloatArray, pose_indices: Sequence[int] = DEFAULT_POSE_INDICES
+) -> AspectMeasurement:
+    """Measure kept-frame coordinates (raw image units). Needs the nose and both shoulders
+    selected for ratios; without the shoulders nothing is measured."""
+    kept_frames = int(coords.shape[0])
+    slots = shoulder_slots(pose_indices)
+    if slots is None:
+        return AspectMeasurement(np.empty(0), 0, kept_frames)
+    left, right = coords[:, slots[0], :2], coords[:, slots[1], :2]
+    shoulders = np.isfinite(left).all(axis=1) & np.isfinite(right).all(axis=1)
+    if NOSE not in pose_indices:
+        return AspectMeasurement(np.empty(0), int(shoulders.sum()), kept_frames)
+    nose = coords[:, pose_slot(pose_indices, NOSE), :2]
+    width = np.abs(left[:, 0] - right[:, 0])
+    usable = shoulders & np.isfinite(nose).all(axis=1) & (width > 0.0)
+    height = np.abs(nose[usable, 1] - 0.5 * (left[usable, 1] + right[usable, 1]))
+    return AspectMeasurement(height / width[usable], int(shoulders.sum()), kept_frames)
+
+
 def preprocess_sequence(
     df: pd.DataFrame,
     *,
@@ -190,14 +225,56 @@ def preprocess_sequence(
     min_hand_frames: int = 3,
 ) -> PreprocessResult:
     """Turn one long-format sequence into fixed-length features, presence and an info dict."""
+    result, _ = preprocess_sequence_measured(
+        df,
+        num_frames=num_frames,
+        use_z=use_z,
+        pose_indices=pose_indices,
+        min_hand_frames=min_hand_frames,
+    )
+    return result
+
+
+def preprocess_sequence_measured(
+    df: pd.DataFrame,
+    *,
+    num_frames: int = 32,
+    use_z: bool = False,
+    pose_indices: Sequence[int] = DEFAULT_POSE_INDICES,
+    min_hand_frames: int = 3,
+) -> tuple[PreprocessResult, AspectMeasurement]:
+    """preprocess_sequence, plus the aspect measurement of the kept frames."""
     coords = pivot_sequence(df, pose_indices)
     presence = hand_presence(coords)
     any_hand = presence.any(axis=1)
     coords, presence = coords[any_hand], presence[any_hand]
+    measurement = aspect_measurement(coords, pose_indices)
+    return _preprocess_kept(
+        coords,
+        presence,
+        int(any_hand.size),
+        num_frames=num_frames,
+        use_z=use_z,
+        pose_indices=pose_indices,
+        min_hand_frames=min_hand_frames,
+    ), measurement
+
+
+def _preprocess_kept(
+    coords: FloatArray,
+    presence: BoolArray,
+    t_raw: int,
+    *,
+    num_frames: int,
+    use_z: bool,
+    pose_indices: Sequence[int],
+    min_hand_frames: int,
+) -> PreprocessResult:
+    """The steps after hand-less frames are dropped."""
 
     info = SequenceInfo(
-        t_raw=int(any_hand.size),
-        t_kept=int(any_hand.sum()),
+        t_raw=t_raw,
+        t_kept=int(coords.shape[0]),
         mirrored=False,
         norm_method=None,
         excluded=False,

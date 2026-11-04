@@ -16,8 +16,13 @@ import numpy.typing as npt
 import pandas as pd
 
 from edgevision.config import ExperimentConfig, PreprocessConfig
-from edgevision.data.landmarks import num_selected
-from edgevision.data.preprocess import PreprocessResult, SequenceInfo, preprocess_sequence
+from edgevision.data.landmarks import num_selected, pose_swap_pairs
+from edgevision.data.preprocess import (
+    AspectMeasurement,
+    PreprocessResult,
+    SequenceInfo,
+    preprocess_sequence_measured,
+)
 from edgevision.utils.runinfo import collect_run_info
 
 Float16Array = npt.NDArray[np.float16]
@@ -46,8 +51,10 @@ SEQUENCE_DTYPE = np.int64
 
 PROGRESS_EVERY = 1000
 CHUNK_SIZE = 16
-# Bump when a transform changes meaning, so old cache entries stop matching.
-CACHE_VERSION = 1
+# Bump when a transform changes meaning, so old cache entries stop matching. Version 2 entries
+# also hold the aspect measurement behind preprocess_report.json's aspect_stats.
+CACHE_VERSION = 2
+ASPECT_QUANTILES = {"p10": 10.0, "median": 50.0, "p90": 90.0}
 
 
 def read_train_csv(path: Path) -> pd.DataFrame:
@@ -152,6 +159,9 @@ class WorkerParams:
     min_hand_frames: int
 
 
+EMPTY_ASPECT = AspectMeasurement(np.empty(0), 0, 0)
+
+
 @dataclass(frozen=True)
 class SequenceOutcome:
     """Storage-ready result for one sequence; arrays are None when it was excluded."""
@@ -161,30 +171,37 @@ class SequenceOutcome:
     presence: Uint8Array | None
     info: SequenceInfo
     from_cache: bool = False
+    aspect: AspectMeasurement = EMPTY_ASPECT
 
 
-def to_storage(sequence_id: int, result: PreprocessResult) -> SequenceOutcome:
+def to_storage(
+    sequence_id: int, result: PreprocessResult, aspect: AspectMeasurement = EMPTY_ASPECT
+) -> SequenceOutcome:
     """Narrow a result to on-disk dtypes.
 
     float16 tops out at 65504. A scale just above MIN_SCALE can exceed that and would become
     inf on the cast, so such a sequence is excluded rather than stored non-finite.
     """
     if result.features is None or result.hand_presence is None:
-        return SequenceOutcome(sequence_id, None, None, result.info)
+        return SequenceOutcome(sequence_id, None, None, result.info, aspect=aspect)
     with np.errstate(over="ignore"):
         features = result.features.astype(np.float16)
     if not np.isfinite(features).all():
         info = SequenceInfo(**{**result.info, "excluded": True, "reason": "float16_overflow"})
-        return SequenceOutcome(sequence_id, None, None, info)
+        return SequenceOutcome(sequence_id, None, None, info, aspect=aspect)
     return SequenceOutcome(
-        sequence_id, features, result.hand_presence.astype(np.uint8), result.info
+        sequence_id,
+        features,
+        result.hand_presence.astype(np.uint8),
+        result.info,
+        aspect=aspect,
     )
 
 
 def _compute(params: WorkerParams, sequence_id: int, relative_path: str) -> SequenceOutcome:
     try:
         df = read_sequence(params.data_root / relative_path)
-        result = preprocess_sequence(
+        result, aspect = preprocess_sequence_measured(
             df,
             num_frames=params.num_frames,
             use_z=params.use_z,
@@ -201,7 +218,7 @@ def _compute(params: WorkerParams, sequence_id: int, relative_path: str) -> Sequ
             reason=f"read_error: {type(error).__name__}",
         )
         return SequenceOutcome(sequence_id, None, None, info)
-    return to_storage(sequence_id, result)
+    return to_storage(sequence_id, result, aspect)
 
 
 def _load_cached(path: Path, sequence_id: int) -> SequenceOutcome | None:
@@ -209,17 +226,32 @@ def _load_cached(path: Path, sequence_id: int) -> SequenceOutcome | None:
     try:
         with np.load(path, allow_pickle=False) as entry:
             info: SequenceInfo = json.loads(str(entry["info"]))
+            counts = entry["aspect_counts"]
+            aspect = AspectMeasurement(entry["aspect_ratios"], int(counts[0]), int(counts[1]))
             if "features" not in entry.files:
-                return SequenceOutcome(sequence_id, None, None, info, from_cache=True)
+                return SequenceOutcome(
+                    sequence_id, None, None, info, from_cache=True, aspect=aspect
+                )
             return SequenceOutcome(
-                sequence_id, entry["features"], entry["presence"], info, from_cache=True
+                sequence_id,
+                entry["features"],
+                entry["presence"],
+                info,
+                from_cache=True,
+                aspect=aspect,
             )
     except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
         return None
 
 
 def _write_cached(path: Path, outcome: SequenceOutcome) -> None:
-    arrays: dict[str, npt.NDArray[Any]] = {"info": np.array(json.dumps(outcome.info))}
+    arrays: dict[str, npt.NDArray[Any]] = {
+        "info": np.array(json.dumps(outcome.info)),
+        "aspect_ratios": np.asarray(outcome.aspect.ratios, dtype=np.float64),
+        "aspect_counts": np.array(
+            [outcome.aspect.shoulder_frames, outcome.aspect.kept_frames], dtype=np.int64
+        ),
+    }
     if outcome.features is not None and outcome.presence is not None:
         arrays["features"] = outcome.features
         arrays["presence"] = outcome.presence
@@ -263,13 +295,15 @@ def _outcomes(
 
 @dataclass(frozen=True)
 class BatchResult:
-    """Feature rows align with the manifest's non-excluded rows, in order."""
+    """Feature rows align with the manifest's non-excluded rows, in order. ``aspect`` pools the
+    aspect measurements of the kept sequences."""
 
     manifest: pd.DataFrame
     features: Float16Array
     presence: Uint8Array
     cache_hits: int
     computed: int
+    aspect: AspectMeasurement = EMPTY_ASPECT
 
 
 def process_dataset(cfg: PreprocessConfig, *, use_cache: bool = True) -> BatchResult:
@@ -295,7 +329,8 @@ def process_dataset(cfg: PreprocessConfig, *, use_cache: bool = True) -> BatchRe
 
     rows = list(zip(table["sequence_id"].tolist(), table["path"].tolist(), strict=True))
     infos: list[SequenceInfo] = []
-    kept = cache_hits = 0
+    ratios: list[npt.NDArray[np.float64]] = []
+    kept = cache_hits = shoulder_frames = kept_frames = 0
     for outcome in _outcomes(params, rows, cfg.num_workers):
         infos.append(outcome.info)
         cache_hits += outcome.from_cache
@@ -303,6 +338,9 @@ def process_dataset(cfg: PreprocessConfig, *, use_cache: bool = True) -> BatchRe
             features[kept] = outcome.features
             presence[kept] = outcome.presence
             kept += 1
+            ratios.append(outcome.aspect.ratios)
+            shoulder_frames += outcome.aspect.shoulder_frames
+            kept_frames += outcome.aspect.kept_frames
         if len(infos) % PROGRESS_EVERY == 0:
             print(f"processed {len(infos)}/{total}", flush=True)
 
@@ -312,6 +350,9 @@ def process_dataset(cfg: PreprocessConfig, *, use_cache: bool = True) -> BatchRe
         presence=presence[:kept],
         cache_hits=cache_hits,
         computed=total - cache_hits,
+        aspect=AspectMeasurement(
+            np.concatenate(ratios) if ratios else np.empty(0), shoulder_frames, kept_frames
+        ),
     )
 
 
@@ -339,6 +380,38 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
         handle.write("\n")
+
+
+def landmark_selection(cfg: PreprocessConfig) -> dict[str, Any]:
+    """The effective landmark selection, read back by training, evaluation and the web export."""
+    return {
+        "num_landmarks": num_selected(cfg.pose_indices),
+        "landmark_order": ["left_hand_0-20", "right_hand_0-20", "pose_indices"],
+        "pose_indices": list(cfg.pose_indices),
+        "pose_swap_pairs": [list(pair) for pair in pose_swap_pairs(cfg.pose_indices)],
+    }
+
+
+def aspect_stats(aspect: AspectMeasurement) -> dict[str, Any]:
+    """Quantiles of the per-frame aspect ratio over every kept frame of every kept sequence."""
+    quantiles: dict[str, float | None] = dict.fromkeys(ASPECT_QUANTILES)
+    if aspect.ratios.size:
+        values = np.percentile(aspect.ratios, list(ASPECT_QUANTILES.values()))
+        quantiles = {
+            name: float(value) for name, value in zip(ASPECT_QUANTILES, values, strict=True)
+        }
+    fraction = aspect.shoulder_frames / aspect.kept_frames if aspect.kept_frames else None
+    return {
+        "definition": (
+            "r = |y_nose - y_shoulder_mid| / |x_shoulder_left - x_shoulder_right| per kept frame "
+            "where the nose and both shoulders are finite, in raw normalised image coordinates "
+            "before normalisation"
+        ),
+        **quantiles,
+        "frames_measured": int(aspect.ratios.size),
+        "kept_frames": aspect.kept_frames,
+        "shoulders_finite_fraction": fraction,
+    }
 
 
 def build_report(
@@ -369,6 +442,8 @@ def build_report(
         "wall_time_s": round(wall_time_s, 3),
         "config": config.model_dump(mode="json"),
         "run_info": collect_run_info(),
+        "landmarks": landmark_selection(config.preprocess),
+        "aspect_stats": aspect_stats(batch.aspect),
     }
 
 

@@ -24,15 +24,17 @@ from edgevision.evaluation.metrics import macro_f1, top_k_accuracy
 from edgevision.models.config import MODEL_NAMES, ModelName
 from edgevision.models.features import SignClassifier, compute_feature_stats
 from edgevision.models.registry import build_model, count_parameters, save_checkpoint
-from edgevision.runs import CHECKPOINT_FILE, SUMMARY_FILE, is_complete, run_dir
+from edgevision.runs import CHECKPOINT_FILE, SUMMARY_FILE, experiment_run_dir, is_complete
 from edgevision.train.augment import augment_batch
 from edgevision.train.config import AugmentConfig, TrainConfig, dump_train_config
 from edgevision.train.data import (
     label_map_from_manifest,
     load_split_arrays,
     prepare_splits,
+    processed_layout,
     read_manifest,
 )
+from edgevision.train.ema import ModelEMA
 from edgevision.utils.runinfo import collect_run_info
 from edgevision.utils.seed import set_seed
 
@@ -111,6 +113,7 @@ class EpochContext:
     augment: AugmentConfig | None
     order_generator: torch.Generator
     augment_generator: torch.Generator
+    ema: ModelEMA[SignClassifier] | None = None  # Updated after every optimizer step when set.
 
 
 def train_one_epoch(
@@ -141,6 +144,8 @@ def train_one_epoch(
         nn.utils.clip_grad_norm_(model.parameters(), ctx.grad_clip)
         ctx.scaler.step(ctx.optimizer)
         ctx.scaler.update()
+        if ctx.ema is not None:
+            ctx.ema.update(model)
         last_lr = float(ctx.optimizer.param_groups[0]["lr"])
         ctx.scheduler.step()
         loss_sum += loss.detach().float() * index.numel()
@@ -180,8 +185,12 @@ def run_training(
     overwrite: bool = False,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
-    """Train one model and write its run directory; returns the summary."""
-    directory = run_dir(cfg.output_root, cfg.model.name, cfg.split.mode, seed)
+    """Train one model and write its run directory; returns the summary.
+
+    The run directory is <output_root>/<experiment>/seed_<seed>. With ``cfg.ema_decay`` set,
+    validation, checkpoint selection and best.pt use the EMA weights.
+    """
+    directory = experiment_run_dir(cfg.output_root, cfg.experiment_name, seed)
     if is_complete(directory) and not overwrite:
         raise RunExistsError(f"{directory} holds a completed run; pass --overwrite to replace it")
     if directory.exists():
@@ -209,13 +218,26 @@ def run_training(
     x_val = torch.from_numpy(val.X).to(torch_device)
     y_val = torch.from_numpy(val.y).to(torch_device)
 
-    model: SignClassifier = build_model(cfg.model.name, num_classes, cfg.model).to(torch_device)
+    model: SignClassifier = build_model(
+        cfg.model.name,
+        num_classes,
+        cfg.model,
+        feature_set=cfg.feature_set,
+        layout=processed_layout(cfg.processed_dir),
+    ).to(torch_device)
     compute_feature_stats(model.features, x_train)
+    ema = ModelEMA(model, cfg.ema_decay) if cfg.ema_decay is not None else None
     params = count_parameters(model)
+    name = (
+        cfg.model.name
+        if cfg.experiment is None
+        else f"{cfg.experiment} [{cfg.model.name}, features {cfg.feature_set}, recipe {cfg.recipe}]"
+    )
     log(
-        f"{cfg.model.name} ({cfg.split.mode}, seed {seed}): {params:,} parameters, "
+        f"{name} ({cfg.split.mode}, seed {seed}): {params:,} parameters, "
         f"{num_classes} classes, train {len(train.y)} / val {len(val.y)} sequences, "
         f"device {torch_device.type}, amp {use_amp}"
+        + ("" if ema is None else f", EMA decay {cfg.ema_decay}")
     )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -237,7 +259,10 @@ def run_training(
         augment=cfg.augment if cfg.augment.enabled else None,
         order_generator=torch.Generator().manual_seed(order_seed),
         augment_generator=torch.Generator(device=torch_device).manual_seed(augment_seed),
+        ema=ema,
     )
+    # What validation scores and best.pt stores: the EMA weights when EMA is on.
+    evaluated: SignClassifier = model if ema is None else ema.module
 
     rows: list[dict[str, float]] = []
     best_top1, best_top5, best_epoch, stale = -1.0, 0.0, 0, 0
@@ -245,8 +270,9 @@ def run_training(
     started = time.perf_counter()
     for epoch in range(1, cfg.epochs + 1):
         epoch_started = time.perf_counter()
+        model.set_training_progress(epoch, cfg.epochs)
         train_loss, train_top1, lr = train_one_epoch(model, x_train, y_train, ctx)
-        val_loss, val_logits = evaluate(model, x_val, y_val, criterion)
+        val_loss, val_logits = evaluate(evaluated, x_val, y_val, criterion)
         val_top1 = top_k_accuracy(val_logits, val.y, 1)
         val_top5 = top_k_accuracy(val_logits, val.y, 5)
         row = {
@@ -274,7 +300,7 @@ def run_training(
             best_predictions = val_logits.argmax(axis=1)
             save_checkpoint(
                 directory / CHECKPOINT_FILE,
-                model,
+                evaluated,
                 cfg.model,
                 num_classes=num_classes,
                 label_map=label_map,
@@ -291,6 +317,9 @@ def run_training(
         "params": params,
         "seed": seed,
         "split_mode": cfg.split.mode,
+        "experiment": cfg.experiment_name,
+        "feature_set": cfg.feature_set,
+        "recipe": cfg.recipe,
         "num_classes": num_classes,
         "train_sequences": len(train.y),
         "val_sequences": len(val.y),

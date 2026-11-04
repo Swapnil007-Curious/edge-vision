@@ -48,6 +48,7 @@ from edgevision.runs import (
     QUANT_REPORT_FILE,
     QUANT_VARIANTS,
     CompletedRun,
+    experiment_of,
     variant_file,
 )
 from edgevision.runtime import (
@@ -69,6 +70,7 @@ META_FP16_FALLBACK = "edgevision.fp16_fallback_reason"
 META_CALIBRATION = "edgevision.calibration"
 META_EXCLUDED_NODES = "edgevision.excluded_nodes"
 QUANT_OPS_COLUMNS = (
+    "experiment",
     "model",
     "variant",
     "size_mb",
@@ -465,14 +467,23 @@ def quantize_run(
 def find_quant_reports(quant_root: Path) -> list[dict[str, Any]]:
     """Every signer-independent quant_report.json under ``quant_root``, in path order."""
     reports = []
-    for path in sorted(quant_root.glob(f"*_{PRIMARY_SPLIT_MODE}/seed_*/{QUANT_REPORT_FILE}")):
+    for path in sorted(quant_root.glob(f"*/seed_*/{QUANT_REPORT_FILE}")):
         with path.open(encoding="utf-8") as handle:
-            reports.append(json.load(handle))
+            report = json.load(handle)
+        if report.get("split_mode", PRIMARY_SPLIT_MODE) == PRIMARY_SPLIT_MODE:
+            reports.append(report)
     return reports
 
 
+def report_experiment(report: dict[str, Any]) -> str:
+    """The experiment of a quant report: the first part of its run key, else the v1 name."""
+    run = report.get("run")
+    return str(run).split("/")[0] if run else experiment_of(report)
+
+
 def quant_ops_summary(reports: Sequence[dict[str, Any]]) -> pd.DataFrame:
-    """One row per (model, variant): means over seeds; failures counts seeds without the file."""
+    """One row per (experiment, variant): means over seeds; failures counts seeds without the
+    file."""
     rows = []
     for report in reports:
         fp32_size = report["variants"].get("fp32", {}).get("size_bytes")
@@ -483,6 +494,7 @@ def quant_ops_summary(reports: Sequence[dict[str, Any]]) -> pd.DataFrame:
             graph = entry.get("graph", {}) if ok else {}
             rows.append(
                 {
+                    "experiment": report_experiment(report),
                     "model": report["model"],
                     "variant": variant,
                     "size_mb": size / 1e6 if size else None,
@@ -497,7 +509,7 @@ def quant_ops_summary(reports: Sequence[dict[str, Any]]) -> pd.DataFrame:
     frame = pd.DataFrame(rows)
     frame["variant"] = pd.Categorical(frame["variant"], categories=QUANT_VARIANTS, ordered=True)
     table = (
-        frame.groupby(["model", "variant"], sort=True, observed=True)
+        frame.groupby(["model", "experiment", "variant"], sort=True, observed=True)
         .agg(
             size_mb=("size_mb", "mean"),
             size_ratio_vs_fp32=("size_ratio_vs_fp32", "mean"),

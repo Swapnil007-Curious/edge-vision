@@ -24,6 +24,9 @@ SUMMARY_KEYS = {
     "params",
     "seed",
     "split_mode",
+    "experiment",
+    "feature_set",
+    "recipe",
     "num_classes",
     "train_sequences",
     "val_sequences",
@@ -161,6 +164,11 @@ def test_train_smoke_writes_every_output(smoke_run, processed):
         "gru",
         0,
         "signer_independent",
+    )
+    assert (summary["experiment"], summary["feature_set"], summary["recipe"]) == (
+        "gru_signer_independent",
+        "v1",
+        "v1",
     )
     assert summary["epochs_run"] == 3
     assert summary["best_val_top1"] == metrics["val_top1"].max()

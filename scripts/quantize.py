@@ -1,6 +1,8 @@
 """Build fp32, fp16, int8 dynamic and int8 static ONNX variants of every completed
-signer-independent run, plus int8_static_full (int8 static with nothing excluded, an ablation),
-check them on val, and write results/tables/quant_ops_summary.csv.
+signer-independent run with v1 features, plus int8_static_full (int8 static with nothing
+excluded, an ablation), check them on val, and write results/tables/quant_ops_summary.csv.
+
+Runs are found from their summary.json fields; runs with v2 features are listed and skipped.
 
 A variant that fails is recorded in its run's quant_report.json and the batch continues; the exit
 code is 1 if anything failed. A file built with an older schema version of its variant is
@@ -15,7 +17,9 @@ from pathlib import Path
 from edgevision.evaluation.tables import PRIMARY_SPLIT_MODE
 from edgevision.models.config import MODEL_NAMES
 from edgevision.quant.pipeline import find_quant_reports, quant_ops_summary, quantize_run
-from edgevision.runs import find_completed_runs, run_dir
+from edgevision.runs import find_completed_runs
+
+QUANTISED_FEATURE_SETS = ("v1",)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -38,13 +42,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    runs = [
-        run
-        for run in find_completed_runs(args.runs_root)
-        if run.summary["split_mode"] == PRIMARY_SPLIT_MODE
-        and run.summary["model"] in args.models
-        and (args.seeds is None or run.summary["seed"] in args.seeds)
-    ]
+    runs = []
+    for run in find_completed_runs(args.runs_root):
+        if not (
+            run.split_mode == PRIMARY_SPLIT_MODE
+            and run.model in args.models
+            and (args.seeds is None or run.seed in args.seeds)
+        ):
+            continue
+        if run.feature_set not in QUANTISED_FEATURE_SETS:
+            print(f"{run.key}: feature set {run.feature_set} is not quantised; skipped", flush=True)
+            continue
+        runs.append(run)
     if not runs:
         print(
             f"error: no completed {PRIMARY_SPLIT_MODE} runs under {args.runs_root} match "
@@ -56,8 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     failed = []
     for index, run in enumerate(runs, start=1):
         print(f"[{index}/{len(runs)}] {run.key}", flush=True)
-        summary = run.summary
-        out_dir = run_dir(args.out_root, summary["model"], summary["split_mode"], summary["seed"])
+        out_dir = args.out_root / run.key  # <quant root>/<experiment>/seed_<seed>.
         report = quantize_run(
             run,
             args.processed_dir,

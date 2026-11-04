@@ -1,7 +1,9 @@
 """CPU latency of the trained models and their ONNX variants, one sequence per call by default.
 
-Inputs are val sequences cycled in order; test is never read. Each configuration (model, seed,
-variant, intra-op threads) gets a fresh session, warm-up calls, then individually timed calls.
+Inputs are val sequences cycled in order; test is never read. Each configuration (experiment,
+seed, variant, intra-op threads) gets a fresh session, warm-up calls, then individually timed
+calls. Experiments default to the v1 experiments of --models; runs are found by their
+summary.json fields.
 The whole configuration list runs for several rounds, shuffled within each round by a seeded
 generator, with a pause between configurations. Writes <out>/bench/bench_raw.csv,
 <out>/bench/bench_env.json and <out>/tables/bench_summary.csv (with a _batch<N> suffix when
@@ -35,7 +37,13 @@ from edgevision.bench.latency import (
 from edgevision.data.io import write_json
 from edgevision.evaluation.tables import PRIMARY_SPLIT_MODE
 from edgevision.models.config import MODEL_NAMES
-from edgevision.runs import CHECKPOINT_FILE, CompletedRun, find_completed_runs, variant_file
+from edgevision.runs import (
+    CHECKPOINT_FILE,
+    CompletedRun,
+    find_completed_runs,
+    run_name,
+    variant_file,
+)
 from edgevision.runtime import session_settings
 from edgevision.train.data import load_split_arrays
 
@@ -58,6 +66,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="preprocessing output to read val inputs from",
     )
     parser.add_argument("--models", nargs="+", choices=MODEL_NAMES, default=list(MODEL_NAMES))
+    parser.add_argument(
+        "--experiments",
+        nargs="+",
+        help="experiment names to benchmark (default: <model>_signer_independent for --models)",
+    )
     parser.add_argument(
         "--variants", nargs="+", choices=BENCH_VARIANTS, default=list(BENCH_VARIANTS)
     )
@@ -84,7 +97,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def val_inputs(
     runs: dict[tuple[str, int], CompletedRun], processed_dir: Path
 ) -> dict[tuple[str, int], npt.NDArray[np.float32]]:
-    """Val inputs per (model, seed) from each run's split file, loaded once per file contents."""
+    """Val inputs per (experiment, seed) from each run's split file, loaded once per file
+    contents."""
     loaded: dict[str, npt.NDArray[np.float32]] = {}
     inputs = {}
     for key, run in runs.items():
@@ -99,19 +113,20 @@ def val_inputs(
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     runs = {
-        (run.summary["model"], run.summary["seed"]): run
+        (run.experiment, run.seed): run
         for run in find_completed_runs(args.runs_root)
-        if run.summary["split_mode"] == PRIMARY_SPLIT_MODE
+        if run.split_mode == PRIMARY_SPLIT_MODE
     }
-    wanted = [(model, seed) for model in args.models for seed in args.seeds]
-    absent = [f"{model} seed {seed}" for model, seed in wanted if (model, seed) not in runs]
+    experiments = args.experiments or [run_name(model, PRIMARY_SPLIT_MODE) for model in args.models]
+    wanted = [(experiment, seed) for experiment in experiments for seed in args.seeds]
+    absent = [f"{name} seed {seed}" for name, seed in wanted if (name, seed) not in runs]
     if absent:
         print(f"error: no completed {PRIMARY_SPLIT_MODE} run for {absent}", file=sys.stderr)
         return 1
 
     configs = []
-    for model, seed in wanted:
-        run = runs[(model, seed)]
+    for experiment, seed in wanted:
+        run = runs[(experiment, seed)]
         for variant in args.variants:
             path = (
                 run.directory / CHECKPOINT_FILE
@@ -119,7 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else args.quant_root / run.key / variant_file(ONNX_VARIANT[variant])
             )
             configs += [
-                BenchConfig(model, seed, variant, threads, args.batch, path)
+                BenchConfig(experiment, run.model, seed, variant, threads, args.batch, path)
                 for threads in args.threads
             ]
     missing = sorted({str(config.path) for config in configs if not config.path.is_file()})
@@ -138,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "inputs": "val sequences cycled in order",
         "timer": "time.perf_counter_ns around each call; garbage collector paused while timing",
         "models": args.models,
+        "experiments": experiments,
         "variants": args.variants,
         "seeds": args.seeds,
         "threads": args.threads,
@@ -174,7 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "position": position,
                 **measure(
                     config,
-                    inputs[(config.model, config.seed)],
+                    inputs[(config.experiment, config.seed)],
                     warmup=args.warmup,
                     iters=args.iters,
                 ),
@@ -182,8 +198,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             rows.append(row)
             pd.DataFrame(rows, columns=list(RAW_COLUMNS)).to_csv(raw_path, index=False)
             print(
-                f"[{len(rows)}/{total}] round {round_number} {config.model} seed {config.seed} "
-                f"{config.variant} threads {config.threads}: p50 {row['p50_ms']:.3f} ms "
+                f"[{len(rows)}/{total}] round {round_number} {config.experiment} "
+                f"seed {config.seed} {config.variant} threads {config.threads}: "
+                f"p50 {row['p50_ms']:.3f} ms "
                 f"p95 {row['p95_ms']:.3f} ms",
                 flush=True,
             )

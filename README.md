@@ -46,8 +46,9 @@ python scripts/train.py --config experiments/train_gru.yaml --seed 0 --processed
 ```
 
 A run writes `config.yaml`, `metrics.csv`, `best.pt`, `label_map.json`, `summary.json` and the
-split file it used to `results/runs/<model>_<split_mode>/seed_<seed>/`. It refuses to replace a
-completed run unless `--overwrite` is passed. The processed directory is only read.
+split file it used to `results/runs/<experiment>/seed_<seed>/`. A v1 config's experiment is
+`<model>_<split_mode>` (e.g. `gru_signer_independent`); v2 configs name theirs. It refuses to
+replace a completed run unless `--overwrite` is passed. The processed directory is only read.
 
 Full training runs on a Kaggle GPU; see [kaggle/TRAINING.md](kaggle/TRAINING.md) for the notebook
 cells.
@@ -66,6 +67,47 @@ cells.
 - **Seeds.** Each signer-independent configuration is trained with seeds 0, 1 and 2, and results
   are reported as the mean and standard deviation over seeds. Runs are seeded and use
   deterministic algorithms where available; GPU runs may still differ bitwise between repeats.
+- **Seed ensembles.** For every experiment with at least two completed seeds, `aggregate_val.py`
+  also scores the mean of the seeds' logits on validation (`val_ensemble.csv`) and
+  `final_eval.py` on test (`test_ensemble.csv`).
+- **Experiments.** Every table starts with an `experiment` column. Runs are found from their
+  `summary.json` fields (model, split mode, feature set, recipe); summaries written before these
+  fields existed are v1 runs.
+
+## v2 ablation: features, recipe and architecture
+
+The v2 grid changes one thing at a time against the v1 CNN (`cnn_signer_independent`), with the
+same signer-independent split:
+
+| Experiment | Model | Features | Recipe |
+| --- | --- | --- | --- |
+| `b_cnn_v2feat_v1recipe` | cnn | v2 | v1 |
+| `c_cnn_v2feat_v2recipe` | cnn | v2 | v2 |
+| `d_hybrid_v2feat_v2recipe` | hybrid | v2 | v2 |
+
+- **v2 landmarks** (`experiments/preprocess_v2.yaml`): pose 0-16 (nose, eyes, ears, mouth
+  corners, shoulders, elbows, wrists), so L = 59. Mirroring swaps every selected left/right pose
+  pair. `preprocess_report.json` records the selection (`landmarks`) and, for v1 and v2 alike, the
+  face/shoulder `aspect_stats`.
+- **v2 features** (`models/features_v2.py`, inside the ONNX graph): coordinates, velocity,
+  acceleration, the 210 pairwise distances of the dominant hand and 24 distances from its wrist
+  and fingertips to the nose, mouth centre and shoulders; 588 features, standardised with train
+  statistics. Any value derived from a missing point is 0.0.
+- **v2 recipe**: 150 epochs, patience 30, an exponential moving average of the weights (decay
+  0.999; validation and `best.pt` use it), and extra augmentations: frame dropout, time masking,
+  landmark masking and hand-shape rotation.
+- **Hybrid** (`models/hybrid.py`): three stages of two depthwise-conv blocks and one transformer
+  block, with late head dropout (off for the first half of the epochs).
+
+```powershell
+python scripts/preprocess.py --config experiments/preprocess_v2.yaml --data-root <asl-signs dir> --output-dir <processed_v2 dir>
+python scripts/run_grid.py --grid v2 --processed-dir <processed_v2 dir> --max-hours 10
+```
+
+`--max-hours` stops starting new runs once that much wall time has passed; a rerun resumes.
+`scripts/export_web.py` and quantisation handle v1-feature runs only.
+`src/edgevision/export/ensemble.py` exports the seeds of one experiment as one ONNX file that
+averages their logits.
 
 ## Quantisation
 

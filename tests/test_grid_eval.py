@@ -132,7 +132,8 @@ def test_final_eval_writes_every_table_and_logs_each_access(grid):
     assert counts == {"signer_independent": 3 * 4, "signer_dependent": 3 * 8}
 
     confusions = pd.read_csv(tables / "top_confusions.csv", keep_default_na=False)
-    assert confusions.columns.tolist() == ["model", "split_mode", *CONFUSION_COLUMNS]
+    assert confusions.columns.tolist() == ["experiment", "model", "split_mode", *CONFUSION_COLUMNS]
+    assert (confusions["experiment"] == confusions["model"] + "_signer_independent").all()
     assert len(confusions) <= 30
     independent = val_summary.loc[val_summary["split_mode"] == "signer_independent"]
     best = independent.sort_values(["val_top1_mean", "model"], ascending=[False, True]).iloc[0]

@@ -36,7 +36,6 @@ from edgevision.runs import (
     CHECKPOINT_FILE,
     QUANT_REPORT_FILE,
     SUMMARY_FILE,
-    run_dir,
     variant_file,
 )
 from edgevision.runtime import (
@@ -331,7 +330,10 @@ def preprocessing_settings(processed_dir: Path) -> PreprocessingSettings:
     report_path = processed_dir / PREPROCESS_REPORT_FILE
     if report_path.is_file():
         with report_path.open(encoding="utf-8") as handle:
-            values = json.load(handle)["config"]["preprocess"]
+            report = json.load(handle)
+        values = dict(report["config"]["preprocess"])
+        if "landmarks" in report:  # The effective selection, recorded since v2.
+            values["pose_indices"] = report["landmarks"]["pose_indices"]
         source = PREPROCESS_REPORT_FILE
     else:
         fields = PreprocessConfig.model_fields
@@ -954,9 +956,14 @@ def export_web(
     if variant not in WEB_VARIANTS:
         raise ValueError(f"variant must be one of {WEB_VARIANTS}, got {variant!r}")
     summary = read_json(run_directory / SUMMARY_FILE)
-    model_name, split_mode, seed = summary["model"], summary["split_mode"], int(summary["seed"])
+    model_name, seed = summary["model"], int(summary["seed"])
+    if summary.get("feature_set", "v1") != "v1":
+        raise ValueError(
+            f"{run_directory} uses feature set {summary['feature_set']}; the web demo implements "
+            "v1 preprocessing only"
+        )
     run_key = f"{run_directory.parent.name}/{run_directory.name}"
-    quant_dir = run_dir(quant_root, model_name, split_mode, seed)
+    quant_dir = quant_root / run_key  # <quant root>/<experiment>/seed_<seed>.
     selection = select_variant(read_json(quant_dir / QUANT_REPORT_FILE), variant)
 
     source = quant_dir / variant_file(variant)

@@ -1,8 +1,8 @@
 """Landmark constants and selection for the asl-signs MediaPipe Holistic output.
 
 The selected order is fixed: left_hand 0-20, right_hand 0-20, then pose landmarks in
-``pose_indices`` order. With the default pose indices that gives L = 49. Face landmarks are
-dropped.
+``pose_indices`` order. With the default pose indices that gives L = 49; the v2 selection
+(pose 0-16) gives L = 59. Face landmarks are dropped.
 """
 
 from collections.abc import Sequence
@@ -19,8 +19,21 @@ N_ALL_LANDMARKS = sum(LANDMARK_COUNTS.values())
 
 # Nose, shoulders, elbows, wrists.
 DEFAULT_POSE_INDICES: tuple[int, ...] = (0, 11, 12, 13, 14, 15, 16)
+NOSE = 0
 SHOULDERS: tuple[int, int] = (11, 12)
-POSE_SWAP_PAIRS: tuple[tuple[int, int], ...] = (SHOULDERS, (13, 14), (15, 16))
+# Every left/right pair among pose 0-16 (eyes inner, eyes, eyes outer, ears, mouth corners,
+# shoulders, elbows, wrists). Mirroring swaps the pairs a selection holds, in this order; for
+# DEFAULT_POSE_INDICES that is (11, 12), (13, 14), (15, 16), as before these pairs were added.
+POSE_SWAP_PAIRS: tuple[tuple[int, int], ...] = (
+    (1, 4),
+    (2, 5),
+    (3, 6),
+    (7, 8),
+    (9, 10),
+    SHOULDERS,
+    (13, 14),
+    (15, 16),
+)
 
 # Slices into the selected landmark axis; POSE is open-ended because pose_indices is configurable.
 LEFT_HAND = slice(0, N_HAND)
@@ -49,6 +62,13 @@ def validate_pose_indices(pose_indices: Sequence[int]) -> None:
     for first, second in POSE_SWAP_PAIRS:
         if (first in selected) != (second in selected):
             raise ValueError(f"pose_indices must contain both or neither of ({first}, {second})")
+
+
+def pose_swap_pairs(pose_indices: Sequence[int]) -> tuple[tuple[int, int], ...]:
+    """The POSE_SWAP_PAIRS whose two landmarks are both selected, in POSE_SWAP_PAIRS order."""
+    validate_pose_indices(pose_indices)
+    selected = set(pose_indices)
+    return tuple(pair for pair in POSE_SWAP_PAIRS if pair[0] in selected)
 
 
 def pose_slot(pose_indices: Sequence[int], landmark: int) -> int:
@@ -83,8 +103,7 @@ def mirror_permutation(pose_indices: Sequence[int] = DEFAULT_POSE_INDICES) -> In
         permutation[RIGHT_HAND].copy(),
         permutation[LEFT_HAND].copy(),
     )
-    for first, second in POSE_SWAP_PAIRS:
-        if first in pose_indices:
-            slot_a, slot_b = pose_slot(pose_indices, first), pose_slot(pose_indices, second)
-            permutation[[slot_a, slot_b]] = permutation[[slot_b, slot_a]]
+    for first, second in pose_swap_pairs(pose_indices):
+        slot_a, slot_b = pose_slot(pose_indices, first), pose_slot(pose_indices, second)
+        permutation[[slot_a, slot_b]] = permutation[[slot_b, slot_a]]
     return permutation

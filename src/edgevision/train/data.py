@@ -23,17 +23,24 @@ from edgevision.data.splits import (
     splits_to_json,
     summarize_splits,
 )
-from edgevision.layout import COORDS_PER_LANDMARK, NUM_FRAMES, NUM_LANDMARKS, to_model_input
+from edgevision.layout import (
+    COORDS_PER_LANDMARK,
+    NUM_FRAMES,
+    V1_LAYOUT,
+    InputLayout,
+    to_model_input,
+)
 
 FEATURES_NPZ = "features.npz"
 MANIFEST_CSV = "manifest.csv"
+PREPROCESS_REPORT_JSON = "preprocess_report.json"
 FEATURE_KEYS = ("X", "presence", "y", "participant_id", "sequence_id")
 MANIFEST_REQUIRED = ("sequence_id", "participant_id", "sign", "label", "excluded")
 TEST_ACCESS_MESSAGE = "test split is only accessible from scripts/final_eval.py"
 
 
 class SplitArrays(NamedTuple):
-    X: npt.NDArray[np.float32]  # (n, 32, 100), see edgevision.layout.
+    X: npt.NDArray[np.float32]  # (n, 32, 2L + 2), see edgevision.layout.
     y: npt.NDArray[np.int64]
     participant_id: npt.NDArray[np.int64]
     sequence_id: npt.NDArray[np.int64]
@@ -41,6 +48,29 @@ class SplitArrays(NamedTuple):
 
 def splits_filename(mode: str) -> str:
     return f"splits_{mode}.json"
+
+
+def processed_layout(processed_dir: Path) -> InputLayout:
+    """The input layout of a processed dir, from the landmark selection its preprocess_report.json
+    records ("landmarks", else the config's pose_indices). Without a report, the v1 layout."""
+    path = processed_dir / PREPROCESS_REPORT_JSON
+    if not path.is_file():
+        return V1_LAYOUT
+    with path.open(encoding="utf-8") as handle:
+        report = json.load(handle)
+    selection = report.get("landmarks") or (report.get("config") or {}).get("preprocess") or {}
+    if "pose_indices" not in selection:
+        return V1_LAYOUT
+    return InputLayout.for_pose_indices(selection["pose_indices"])
+
+
+def matching_processed_dir(candidates: Sequence[Path], layout: InputLayout) -> Path | None:
+    """The first candidate processed dir that holds features with ``layout``, so one list of
+    directories can serve v1 and v2 runs alike."""
+    for candidate in candidates:
+        if (candidate / FEATURES_NPZ).is_file() and processed_layout(candidate) == layout:
+            return candidate
+    return None
 
 
 def read_manifest(processed_dir: Path) -> pd.DataFrame:
@@ -134,10 +164,12 @@ def prepare_splits(processed_dir: Path, cfg: SplitConfig, run_dir: Path) -> Path
     return target
 
 
-def _validate_features(arrays: dict[str, npt.NDArray[Any]], path: Path) -> None:
+def _validate_features(
+    arrays: dict[str, npt.NDArray[Any]], path: Path, layout: InputLayout = V1_LAYOUT
+) -> None:
     n = arrays["X"].shape[0]
     expected = {
-        "X": ((n, NUM_FRAMES, NUM_LANDMARKS, COORDS_PER_LANDMARK), np.float16),
+        "X": ((n, NUM_FRAMES, layout.num_landmarks, COORDS_PER_LANDMARK), np.float16),
         "presence": ((n, NUM_FRAMES, 2), np.uint8),
         "y": ((n,), LABEL_DTYPE),
         "participant_id": ((n,), PARTICIPANT_DTYPE),
@@ -160,7 +192,8 @@ def load_split_arrays(
     split_names: Sequence[str],
     allow_test: bool = False,
 ) -> dict[str, SplitArrays]:
-    """Arrays for each requested split, in the split file's sequence order.
+    """Arrays for each requested split, in the split file's sequence order. The landmark count
+    comes from processed_layout(processed_dir).
 
     Only scripts/final_eval.py passes ``allow_test=True``.
     """
@@ -177,7 +210,8 @@ def load_split_arrays(
         if missing_keys:
             raise ValueError(f"{path}: missing arrays {missing_keys}")
         arrays = {key: data[key] for key in FEATURE_KEYS}
-    _validate_features(arrays, path)
+    layout = processed_layout(processed_dir)
+    _validate_features(arrays, path, layout)
 
     index = pd.Index(arrays["sequence_id"])
     result: dict[str, SplitArrays] = {}
@@ -191,7 +225,7 @@ def load_split_arrays(
                 f"from {path}"
             )
         result[name] = SplitArrays(
-            X=to_model_input(arrays["X"][rows], arrays["presence"][rows]),
+            X=to_model_input(arrays["X"][rows], arrays["presence"][rows], layout.num_landmarks),
             y=arrays["y"][rows].astype(np.int64),
             participant_id=arrays["participant_id"][rows].astype(np.int64),
             sequence_id=arrays["sequence_id"][rows].astype(np.int64),
